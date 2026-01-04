@@ -92,3 +92,13 @@ Run the script (python quantum_gui.py) or the executable.
 *   Stream Processing: Refactor engine to process files in chunks, enabling support for large files (1TB+).
 *   Mobile Support:support Android and iOS.
 *   Digital Signatures: Implement Dilithium for sender authentication.
+
+# ⚠️ Security Disclaimer and Testing Status
+
+**Status:** Experimental / Proof of Concept
+
+This project is currently in the **Testing and Evaluation** phase. While it implements mathematically sound hybrid cryptography (NIST-standard Kyber-1024 and X25519), the following should be noted:
+
+1. **No Professional Audit:** This codebase has not been audited by professional cryptographers or security researchers.
+2. **Experimental Implementation:** This tool was developed using an AI-orchestrated methodology. While functional testing has been successful, it has not undergone rigorous edge-case testing or side-channel attack analysis.
+3. **Usage:** This software is intended for research, educational, and personal evaluation purposes. It should not be used to secure highly sensitive "life-or-death" data without further verification and professional code review.
