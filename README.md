@@ -101,4 +101,4 @@ This project is currently in the **Testing and Evaluation** phase. While it impl
 
 1. **No Professional Audit:** This codebase has not been audited by professional cryptographers or security researchers.
 2. **Experimental Implementation:** This tool was developed using an AI-orchestrated methodology. While functional testing has been successful, it has not undergone rigorous edge-case testing or side-channel attack analysis.
-3. **Usage:** This software is intended for research, educational, and personal evaluation purposes. It should not be used to secure highly sensitive "life-or-death" data without further verification and professional code review.
+3. **Usage:** This software is intended for research, educational, and personal evaluation purposes.
