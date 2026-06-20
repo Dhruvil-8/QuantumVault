@@ -1,0 +1,31 @@
+[package]
+name = "quantumvault"
+version = "0.2.0"
+edition = "2021"
+description = "Post-quantum secure file encryption using NIST FIPS 203/204 standards"
+license = "MIT"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+quantumvault-core = { path = "../quantumvault-core" }
+hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Tauri (optional, feature-gated)
+tauri = { version = "1", optional = true, features = ["dialog-all", "fs-all", "path-all", "shell-open"] }
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[features]
+default = ["tauri", "custom-protocol"]
+tauri = ["dep:tauri"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[[bin]]
+name = "quantumvault"
+path = "src/main.rs"
+

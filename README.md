@@ -1,104 +1,104 @@
-# Quantum Vault: File Encryption
+# QuantumVault
 
-Quantum Vault is a local-first, cross-platform file encryption tool designed to protect sensitive data against the "Harvest Now, Decrypt Later" threat posed by future Quantum Computers.
+QuantumVault is a post-quantum secure file encryption locker and key manager. It implements the latest NIST standards alongside classical primitives in a **hybrid cryptographic model** to guarantee security against both quantum and classical adversaries.
 
-It utilizes a Hybrid Cryptosystem, wrapping battle-tested Classical algorithms (X25519) inside NIST-standard Post-Quantum algorithms (Kyber-1024). This ensures that even if one cryptographic layer is broken in the future, the data remains secure.
+This repository features:
+1. **`quantumvault-core`:** A pure Rust library implementing the cryptographic core.
+2. **`quantumvault-cli`:** A lightweight, dependency-free command-line interface.
+3. **Desktop GUI App:** An elegant Tauri-based desktop app utilizing a zero-dependency, ultra-lightweight Vanilla HTML/CSS/JS frontend (no `node_modules` required!).
 
-## Development Methodology
+---
 
-**AI & Tools:** Code generated using Google Gemini 3 Pro & Gemini 3 Flash (via Google AI Studio).
+## Cryptographic Architecture
 
-**Role of the Developer:** My role was guiding the architecture, asking the right questions, and providing iterative feedback to refine the implementation and solve challenges.
+QuantumVault uses a **hybrid key encapsulation** approach:
+* **Classical Layer:** X25519 ECDH (RFC 7748) provides standard classical security.
+* **Post-Quantum Layer:** ML-KEM-1024 (FIPS 203) provides quantum-resistant security.
+* **Signatures (Authenticity):** ML-DSA-65 (FIPS 204) signs the vault header, ensuring that files cannot be tampered with or replaced.
+* **Symmetric Encryption:** File content is encrypted in 8 MiB chunks using **ChaCha20-Poly1305** authenticated encryption.
+* **Key Derivation:** Secrets are combined using **HKDF-SHA3-256**.
 
-## Technical Architecture
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                    QuantumVault File (.qvault)              │
+├──────────────────────────────────────────────────────────────┤
+│  Header                                                       │
+│  ├─ Magic: "QVLT"                                            │
+│  ├─ Version: 2                                                │
+│  ├─ Ephemeral X25519 Public Key (32 bytes)                   │
+│  ├─ ML-KEM Ciphertext (1568 bytes)                           │
+│  ├─ ML-DSA Signature (3309 bytes)                            │
+│  └─ Nonce Seed (32 bytes)                                    │
+├──────────────────────────────────────────────────────────────┤
+│  Encrypted Payload (ChaCha20-Poly1305, chunked)              │
+└──────────────────────────────────────────────────────────────┘
+```
 
-The application uses a "Defense in Depth" strategy. Keys are ephemeral (generated per session) and derived using a hybrid mix.
+---
 
-| Layer | Algorithm | Purpose |
-| :--- | :--- | :--- |
-| **1. Classic** | **X25519** (Elliptic Curve) | Standard Diffie-Hellman key exchange. |
-| **2. Quantum** | **CRYSTALS-Kyber-1024** | NIST-Standard Lattice-based Key Encapsulation. |
-| **3. Derivation** | **HKDF-SHA3-256** | Mixes both secrets into a uniform 32-byte key. |
-| **4. Encryption** | **AES-256-GCM** | Authenticated encryption for the file payload. |
+## Workspace Structure
 
-## Prerequisites
+The project is structured as a Cargo workspace:
+* `/quantumvault-core`: The cryptographic core library containing KEM, DSA, KDF, and file chunk streams.
+* `/quantumvault-cli`: The CLI application for keygen, encryption, and decryption.
+* `/src-tauri`: The Tauri backend that wraps the core library to serve the GUI.
+* `/frontend`: The zero-dependency Vanilla HTML/CSS/JS frontend.
 
-To build and run this project, you need:
-*   Python 3.10 or higher.
-*   A C Compiler (GCC, Clang, or MSVC).
-*   CMake (Build tool).
+---
 
-## Build Instructions
+## Getting Started
 
-### 1. Compile the Quantum Engine (liboqs)
-This project depends on liboqs, a C library. You must compile the binary for your specific operating system.
+### Prerequisites
 
-**For Windows:**
-1.  Clone the library: git clone https://github.com/open-quantum-safe/liboqs.git
-2.  Navigate to the folder and create a build directory.
-3.  Run CMake: cmake -G "Unix Makefiles" .. -DBUILD_SHARED_LIBS=ON -DOQS_USE_OPENSSL=OFF -DOQS_BUILD_ONLY_LIB=ON
-4.  Compile: make -j4
-5.  Action: Locate liboqs.dll in the build/bin folder and copy it to the root of this project.
+* Rust (latest stable toolchain).
+* On Windows, you can compile using either the MSVC toolchain (requires Visual Studio build tools) or the GNU toolchain (`x86_64-pc-windows-gnu`).
 
-**For Linux / macOS:**
-Follow the same steps as above. The output file will be liboqs.so (Linux) or liboqs.dylib (macOS). Copy this file to the project root.
+### Running the CLI Client
 
-### 2. Install Python Dependencies
-pip install -r requirements.txt
+You can build and run the CLI directly:
 
-## Creating the Executable (.exe)
+#### 1. Generate cryptographic keys (Identity)
+Generates keypairs for X25519, ML-KEM, and ML-DSA:
+```bash
+cargo run -p quantumvault-cli -- keygen ./keys/alice
+cargo run -p quantumvault-cli -- keygen ./keys/bob
+```
 
-To distribute this application to users who do not have Python installed, you can bundle it into a standalone executable using PyInstaller.
+#### 2. Encrypt a file
+Encrypt a file for a recipient (Bob) using your identity (Alice):
+```bash
+cargo run -p quantumvault-cli -- encrypt -i document.pdf -o document.pdf.qvault -s ./keys/alice -r ./keys/bob/encryption
+```
 
-1.  Ensure liboqs.dll (or your OS equivalent) is in the project folder.
-2.  Open your terminal and run the following command:
+#### 3. Decrypt a file
+Decrypt a file using your identity (Bob) and verifying the sender's public key (Alice):
+```bash
+cargo run -p quantumvault-cli -- decrypt -i document.pdf.qvault -o document_decrypted.pdf -r ./keys/bob -s ./keys/alice/signing
+```
 
-**Windows Command:**
-pyinstaller --noconfirm --onefile --windowed --add-data "liboqs.dll;." --name "QuantumVault" quantum_gui.py
+---
 
-**Linux/Mac Command:**
-pyinstaller --noconfirm --onefile --windowed --add-data "liboqs.so:." --name "QuantumVault" quantum_gui.py
+## Desktop GUI Client
 
-The final application will be found in the dist folder.
+To run the GUI:
+```bash
+# If using MSVC target
+cargo run --bin quantumvault --features tauri
 
-## Usage Guide
+# If using GNU target on Windows
+rustup run stable-x86_64-pc-windows-gnu cargo run --bin quantumvault --features tauri
+```
 
-Run the script (python quantum_gui.py) or the executable.
+---
 
-### 1. Identity Generation
-*   Click Generate Identity.
-*   Select a secure folder (e.g., an external USB drive).
-*   The tool generates a Classic Keypair and a Quantum Keypair.
+## Cryptographic Disclaimer
 
-### 2. Encryption (Lock)
-*   Select the target file.
-*   Select the folder containing the Public Keys of the recipient.
-*   Click Encrypt.
-*   The output is a .qvault container.
+> [!WARNING]
+> This software is experimental and is an AI-generated codebase. It implements the finalized NIST FIPS 203 (ML-KEM) and FIPS 204 (ML-DSA) standards, but the code has **not** undergone a professional third-party cryptographic or security audit.
+> Do not use this software for high-risk data storage or production environments securing critical assets. Use it at your own risk.
 
-### 3. Decryption (Unlock)
-*   Select the .qvault file.
-*   Select the folder containing your Private Keys.
-*   Click Decrypt.
-*   The tool authenticates the data and restores the original file with its original extension.
+---
 
-## Limitations & Roadmap
+## License
 
-**Current Limitations:**
-*   Memory Usage: The encryption engine loads the full file into RAM. Do not encrypt files larger than your available system memory.
-*   Key Recovery: If private key files are lost, the data cannot be recovered.
-
-**Future Improvements:**
-*   Stream Processing: Refactor engine to process files in chunks, enabling support for large files (1TB+).
-*   Mobile Support:support Android and iOS.
-*   Digital Signatures: Implement Dilithium for sender authentication.
-
-# ⚠️ Security Disclaimer and Testing Status
-
-**Status:** Experimental / Proof of Concept
-
-This project is currently in the **Testing and Evaluation** phase. While it implements mathematically sound hybrid cryptography (NIST-standard Kyber-1024 and X25519), the following should be noted:
-
-1. **No Professional Audit:** This codebase has not been audited by professional cryptographers or security researchers.
-2. **Experimental Implementation:** This tool was developed using an AI-orchestrated methodology. While functional testing has been successful, it has not undergone rigorous edge-case testing or side-channel attack analysis.
-3. **Usage:** This software is intended for research, educational, and personal evaluation purposes.
+This project is licensed under the MIT License.

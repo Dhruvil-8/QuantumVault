@@ -1,0 +1,10 @@
+# Cargo configuration for QuantumVault
+# Uses GNU toolchain (MSYS2) instead of MSVC for Windows builds
+
+[build]
+# Use single job to avoid file locking issues on Windows
+jobs = 1
+
+[target.x86_64-pc-windows-gnu]
+# Use MSYS2 GNU linker
+linker = "x86_64-w64-mingw32-gcc"

@@ -1,0 +1,10 @@
+[package]
+name = "quantumvault-cli"
+version = "0.2.0"
+edition = "2021"
+description = "CLI for QuantumVault post-quantum file encryption"
+license = "MIT"
+
+[dependencies]
+quantumvault-core = { path = "../quantumvault-core" }
+anyhow = "1.0"

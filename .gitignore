@@ -1,8 +1,27 @@
-__pycache__/
-build/
-dist/
-*.spec
-*.exe
-*.dll
-*.so
-*.dylib
+# Rust build directories and artifacts
+target/
+target_tmp/
+target_random_build/
+**/*.rs.bk
+Cargo.lock
+
+# Test outputs and keys (CRITICAL: Do not upload test keys to GitHub)
+/test_output/
+/keys/
+
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+.env.*
+
+# OS-specific files
+Thumbs.db
+Desktop.ini
+.DS_Store
