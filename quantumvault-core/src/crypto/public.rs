@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_recipient_public_from_identity() {
-        let identity = Identity::generate();
+        let identity = Identity::generate().unwrap();
         let recipient = identity.recipient_public();
         
         assert_eq!(recipient.x25519_pub.len(), 32);
@@ -97,9 +97,10 @@ mod tests {
 
     #[test]
     fn test_sender_public_from_identity() {
-        let identity = Identity::generate();
+        let identity = Identity::generate().unwrap();
         let sender = identity.sender_public();
         
         assert_eq!(sender.ml_dsa_pub.len(), PUBLIC_KEY_SIZE);
     }
 }
+

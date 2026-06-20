@@ -1,9 +1,11 @@
 use rand::rngs::OsRng;
 use x25519_dalek::{StaticSecret, PublicKey, SharedSecret};
 
+use crate::errors::VaultError;
+
 pub struct X25519KeyPair {
-    pub secret: Option<StaticSecret>,
-    pub public: PublicKey,
+    pub(crate) secret: Option<StaticSecret>,
+    pub(crate) public: PublicKey,
 }
 
 impl X25519KeyPair {
@@ -16,8 +18,13 @@ impl X25519KeyPair {
         }
     }
 
-    pub fn diffie_hellman_query(&self, peer: &PublicKey) -> SharedSecret {
-        let secret = self.secret.as_ref().expect("X25519 secret missing");
-        secret.diffie_hellman(peer)
+    pub fn diffie_hellman_query(&self, peer: &PublicKey) -> Result<SharedSecret, VaultError> {
+        let secret = self.secret.as_ref().ok_or(VaultError::KeyExchangeFailed)?;
+        Ok(secret.diffie_hellman(peer))
+    }
+
+    /// Get the public key bytes
+    pub fn public_bytes(&self) -> [u8; 32] {
+        *self.public.as_bytes()
     }
 }

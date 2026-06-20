@@ -13,7 +13,7 @@ use quantumvault_core::{Identity, RecipientPublic, SenderPublic};
 /// Creates ML-KEM, ML-DSA, and X25519 keypairs and saves them to disk.
 #[tauri::command]
 pub fn generate_identity(base_dir: String) -> Result<String, String> {
-    let identity = Identity::generate();
+    let identity = Identity::generate().map_err(|e| e.to_string())?;
     identity
         .save_to(Path::new(&base_dir))
         .map_err(|e| e.to_string())?;
@@ -73,8 +73,8 @@ pub fn get_identity_info(identity_path: String) -> Result<serde_json::Value, Str
     let identity = Identity::load(Path::new(&identity_path)).map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
-        "x25519_pub": hex::encode(identity.x25519.public.as_bytes()),
-        "ml_kem_pub_size": identity.ml_kem_ek.as_bytes().len(),
-        "ml_dsa_pub_size": identity.ml_dsa_pk.as_bytes().len(),
+        "x25519_pub": hex::encode(identity.x25519_public_bytes()),
+        "ml_kem_pub_size": identity.ml_kem_ek_size(),
+        "ml_dsa_pub_size": identity.ml_dsa_pk_size(),
     }))
-}
+}

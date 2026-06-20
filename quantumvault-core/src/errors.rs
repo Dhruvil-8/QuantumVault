@@ -20,6 +20,21 @@ pub enum VaultError {
     #[error("Decryption failed")]
     DecryptionFailed,
 
+    #[error("Chunk counter overflow")]
+    ChunkOverflow,
+
+    #[error("Chunk size exceeds maximum")]
+    ChunkTooLarge,
+
+    #[error("Key generation failed")]
+    KeygenFailed,
+
+    #[error("Signing operation failed")]
+    SigningFailed,
+
+    #[error("Key exchange failed")]
+    KeyExchangeFailed,
+
     #[error("Unexpected end of file")]
     UnexpectedEof,
 

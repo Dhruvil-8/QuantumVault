@@ -6,6 +6,8 @@
 use fips204::ml_dsa_65;
 use fips204::traits::{SerDes, Signer, Verifier};
 
+use crate::errors::VaultError;
+
 /// Size constants for ML-DSA-65
 pub const PUBLIC_KEY_SIZE: usize = 1952;
 pub const PRIVATE_KEY_SIZE: usize = 4032;
@@ -13,14 +15,30 @@ pub const SIGNATURE_SIZE: usize = 3309;
 
 /// ML-DSA-65 Public Key (for verification)
 #[derive(Clone)]
-pub struct MlDsaPublicKey(pub ml_dsa_65::PublicKey);
+pub struct MlDsaPublicKey(pub(crate) ml_dsa_65::PublicKey);
 
 /// ML-DSA-65 Private Key (for signing)
-pub struct MlDsaPrivateKey(pub ml_dsa_65::PrivateKey);
+pub struct MlDsaPrivateKey(pub(crate) ml_dsa_65::PrivateKey);
 
 /// ML-DSA-65 Signature
 #[derive(Clone)]
-pub struct MlDsaSignature(pub [u8; SIGNATURE_SIZE]);
+pub struct MlDsaSignature(pub(crate) [u8; SIGNATURE_SIZE]);
+
+impl Drop for MlDsaPrivateKey {
+    fn drop(&mut self) {
+        // Zeroize the private key memory by overwriting with zeros.
+        // The inner type is opaque, so we use unsafe pointer write.
+        // SAFETY: We are writing zeros over a validly-allocated, sized region
+        // that we own exclusively (we have &mut self).
+        unsafe {
+            std::ptr::write_bytes(
+                &mut self.0 as *mut _ as *mut u8,
+                0,
+                std::mem::size_of::<ml_dsa_65::PrivateKey>(),
+            );
+        }
+    }
+}
 
 impl MlDsaPublicKey {
     /// Create from raw bytes
@@ -78,16 +96,16 @@ impl MlDsaSignature {
 }
 
 /// Generate a new ML-DSA-65 keypair
-pub fn generate() -> (MlDsaPublicKey, MlDsaPrivateKey) {
-    let (pk, sk) = ml_dsa_65::try_keygen().expect("ML-DSA keygen failed");
-    (MlDsaPublicKey(pk), MlDsaPrivateKey(sk))
+pub fn generate() -> Result<(MlDsaPublicKey, MlDsaPrivateKey), VaultError> {
+    let (pk, sk) = ml_dsa_65::try_keygen().map_err(|_| VaultError::KeygenFailed)?;
+    Ok((MlDsaPublicKey(pk), MlDsaPrivateKey(sk)))
 }
 
 /// Sign a message using the private key
-pub fn sign(message: &[u8], sk: &MlDsaPrivateKey) -> MlDsaSignature {
+pub fn sign(message: &[u8], sk: &MlDsaPrivateKey) -> Result<MlDsaSignature, VaultError> {
     // Empty context per NIST spec for basic signatures
-    let sig_bytes = sk.0.try_sign(message, &[]).expect("ML-DSA signing failed");
-    MlDsaSignature(sig_bytes)
+    let sig_bytes = sk.0.try_sign(message, &[]).map_err(|_| VaultError::SigningFailed)?;
+    Ok(MlDsaSignature(sig_bytes))
 }
 
 /// Verify a signature using the public key
@@ -102,10 +120,10 @@ mod tests {
 
     #[test]
     fn test_keygen_sign_verify() {
-        let (pk, sk) = generate();
+        let (pk, sk) = generate().unwrap();
         let message = b"Hello, quantum-resistant world!";
         
-        let signature = sign(message, &sk);
+        let signature = sign(message, &sk).unwrap();
         assert!(verify(message, &signature, &pk));
         
         // Test with wrong message
@@ -114,8 +132,50 @@ mod tests {
     }
 
     #[test]
+    fn test_wrong_key_rejects_signature() {
+        let (pk1, sk1) = generate().unwrap();
+        let (_pk2, sk2) = generate().unwrap();
+        let message = b"Signed by key 1";
+
+        let sig = sign(message, &sk1).unwrap();
+        // Verify with correct key succeeds
+        assert!(verify(message, &sig, &pk1));
+
+        // Verify with wrong key fails
+        let (pk_wrong, _) = generate().unwrap();
+        assert!(!verify(message, &sig, &pk_wrong));
+
+        // Sign same message with different key produces different signature
+        let sig2 = sign(message, &sk2).unwrap();
+        assert_ne!(sig.as_bytes(), sig2.as_bytes());
+    }
+
+    #[test]
+    fn test_empty_message_sign_verify() {
+        let (pk, sk) = generate().unwrap();
+        let message = b"";
+
+        let signature = sign(message, &sk).unwrap();
+        assert!(verify(message, &signature, &pk));
+    }
+
+    #[test]
+    fn test_large_message_sign_verify() {
+        let (pk, sk) = generate().unwrap();
+        let message: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
+
+        let signature = sign(&message, &sk).unwrap();
+        assert!(verify(&message, &signature, &pk));
+
+        // Tamper with one byte
+        let mut tampered = message.clone();
+        tampered[50_000] ^= 0x01;
+        assert!(!verify(&tampered, &signature, &pk));
+    }
+
+    #[test]
     fn test_key_serialization() {
-        let (pk, sk) = generate();
+        let (pk, sk) = generate().unwrap();
         
         // Round-trip public key
         let pk_bytes = pk.as_bytes();
@@ -130,13 +190,49 @@ mod tests {
 
     #[test]
     fn test_signature_serialization() {
-        let (pk, sk) = generate();
+        let (pk, sk) = generate().unwrap();
         let message = b"Test message";
         
-        let sig = sign(message, &sk);
+        let sig = sign(message, &sk).unwrap();
         let sig_bytes = sig.as_bytes().to_vec();
         let sig2 = MlDsaSignature::from_bytes(&sig_bytes).unwrap();
         
         assert!(verify(message, &sig2, &pk));
     }
+
+    #[test]
+    fn test_invalid_key_sizes_rejected() {
+        // Too short
+        assert!(MlDsaPublicKey::from_bytes(&[0u8; 10]).is_err());
+        assert!(MlDsaPrivateKey::from_bytes(&[0u8; 10]).is_err());
+        assert!(MlDsaSignature::from_bytes(&[0u8; 10]).is_err());
+
+        // Too long
+        assert!(MlDsaPublicKey::from_bytes(&vec![0u8; PUBLIC_KEY_SIZE + 1]).is_err());
+        assert!(MlDsaPrivateKey::from_bytes(&vec![0u8; PRIVATE_KEY_SIZE + 1]).is_err());
+        assert!(MlDsaSignature::from_bytes(&vec![0u8; SIGNATURE_SIZE + 1]).is_err());
+
+        // Empty
+        assert!(MlDsaPublicKey::from_bytes(&[]).is_err());
+        assert!(MlDsaPrivateKey::from_bytes(&[]).is_err());
+        assert!(MlDsaSignature::from_bytes(&[]).is_err());
+    }
+
+    #[test]
+    fn test_different_signatures_per_signing() {
+        let (pk, sk) = generate().unwrap();
+        let message = b"Determinism test";
+
+        let sig1 = sign(message, &sk).unwrap();
+        let sig2 = sign(message, &sk).unwrap();
+
+        // Both should verify
+        assert!(verify(message, &sig1, &pk));
+        assert!(verify(message, &sig2, &pk));
+
+        // ML-DSA-65 uses randomized signing, so signatures should differ
+        // (This is a security property — deterministic sigs can leak key material)
+        assert_ne!(sig1.as_bytes(), sig2.as_bytes());
+    }
 }
+

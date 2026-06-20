@@ -15,27 +15,55 @@ use x25519_dalek::{StaticSecret, PublicKey};
 
 /// A complete cryptographic identity
 pub struct Identity {
-    pub x25519: x25519::X25519KeyPair,
-    pub ml_kem_ek: ml_kem::MlKemEncapsulationKey,
-    pub ml_kem_dk: ml_kem::MlKemDecapsulationKey,
-    pub ml_dsa_pk: ml_dsa::MlDsaPublicKey,
-    pub ml_dsa_sk: ml_dsa::MlDsaPrivateKey,
+    pub(crate) x25519: x25519::X25519KeyPair,
+    pub(crate) ml_kem_ek: ml_kem::MlKemEncapsulationKey,
+    pub(crate) ml_kem_dk: ml_kem::MlKemDecapsulationKey,
+    pub(crate) ml_dsa_pk: ml_dsa::MlDsaPublicKey,
+    pub(crate) ml_dsa_sk: ml_dsa::MlDsaPrivateKey,
+}
+
+impl Drop for Identity {
+    fn drop(&mut self) {
+        // ml_kem_dk and ml_dsa_sk have their own Drop impls that zeroize.
+        // x25519 StaticSecret is zeroized by x25519_dalek on drop.
+        // We explicitly drop in order to make the intent clear.
+        // The individual Drop impls handle actual zeroization.
+    }
 }
 
 impl Identity {
     /// Generate a new cryptographic identity
-    pub fn generate() -> Self {
-        let (ek, dk) = ml_kem::generate();
-        let (pk, sk) = ml_dsa::generate();
+    pub fn generate() -> Result<Self, VaultError> {
+        let (ek, dk) = ml_kem::generate()?;
+        let (pk, sk) = ml_dsa::generate()?;
 
-        Self {
+        Ok(Self {
             x25519: x25519::X25519KeyPair::generate(),
             ml_kem_ek: ek,
             ml_kem_dk: dk,
             ml_dsa_pk: pk,
             ml_dsa_sk: sk,
-        }
+        })
     }
+
+    // ───── Public accessors ─────
+
+    /// Get X25519 public key bytes
+    pub fn x25519_public_bytes(&self) -> [u8; 32] {
+        self.x25519.public_bytes()
+    }
+
+    /// Get ML-KEM encapsulation (public) key size
+    pub fn ml_kem_ek_size(&self) -> usize {
+        self.ml_kem_ek.as_bytes().len()
+    }
+
+    /// Get ML-DSA public key size
+    pub fn ml_dsa_pk_size(&self) -> usize {
+        self.ml_dsa_pk.as_bytes().len()
+    }
+
+    // ───── Persistence ─────
 
     /// Save identity to disk
     /// 
@@ -148,10 +176,29 @@ fn write_private_file(path: impl AsRef<Path>, data: &[u8]) -> Result<(), VaultEr
         use std::os::unix::fs::OpenOptionsExt;
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create(true).truncate(true).mode(0o600);
-        let mut f = options.open(path)?;
+        let mut f = options.open(path.as_ref())?;
         f.write_all(data)?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Write the file first
+        let mut f = File::create(path.as_ref())?;
+        f.write_all(data)?;
+        drop(f);
+
+        // Restrict ACLs: remove inherited permissions, grant only current user full control.
+        // Uses icacls.exe which is available on all modern Windows versions (Vista+).
+        if let Ok(username) = std::env::var("USERNAME") {
+            let path_str = path.as_ref().to_string_lossy();
+            let _ = std::process::Command::new("icacls")
+                .args([&*path_str, "/inheritance:r"])
+                .output();
+            let _ = std::process::Command::new("icacls")
+                .args([&*path_str, "/grant:r", &format!("{}:F", username)])
+                .output();
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let mut f = File::create(path)?;
         f.write_all(data)?;
@@ -167,13 +214,13 @@ mod tests {
 
     #[test]
     fn test_identity_generation() {
-        let identity = Identity::generate();
+        let identity = Identity::generate().unwrap();
         assert!(identity.x25519.secret.is_some());
     }
 
     #[test]
     fn test_identity_save_load() {
-        let identity = Identity::generate();
+        let identity = Identity::generate().unwrap();
         
         // Create unique temp directory
         let timestamp = SystemTime::now()

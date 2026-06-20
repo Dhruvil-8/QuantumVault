@@ -3,7 +3,7 @@
 //! This module provides the high-level encrypt/decrypt operations
 //! for QuantumVault files (.qvault).
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 
@@ -61,6 +61,9 @@ pub fn encrypt_file(
 
 /// Decrypt a QuantumVault back to a file
 ///
+/// Uses a temporary file for output and atomically renames on success.
+/// This prevents leaving partial/corrupted output if decryption fails mid-stream.
+///
 /// # Arguments
 /// * `vault` - Path to the encrypted vault file
 /// * `output` - Path for the decrypted output file
@@ -73,10 +76,13 @@ pub fn decrypt_file(
     sender_pub: &SenderPublic,
 ) -> Result<(), VaultError> {
     let vault_file = File::open(vault)?;
-    let output_file = File::create(output)?;
+
+    // Write to a temp file first, then rename atomically on success
+    let temp_path = output.with_extension("qvault_tmp");
+    let temp_file = File::create(&temp_path)?;
 
     let mut reader = BufReader::new(vault_file);
-    let mut writer = BufWriter::new(output_file);
+    let mut writer = BufWriter::new(temp_file);
 
     // Read and verify header
     let (header, mut master_key) = VaultHeader::read_from(&mut reader, recipient, sender_pub)?;
@@ -91,8 +97,23 @@ pub fn decrypt_file(
     use zeroize::Zeroize;
     master_key.zeroize();
 
-    res?;
+    if let Err(e) = res {
+        // Clean up temp file on failure
+        drop(writer);
+        let _ = fs::remove_file(&temp_path);
+        return Err(e);
+    }
+
     writer.flush()?;
+    drop(writer);
+
+    // Atomically rename temp file to final output
+    fs::rename(&temp_path, output).map_err(|e| {
+        // If rename fails, try to clean up
+        let _ = fs::remove_file(&temp_path);
+        VaultError::Io(e)
+    })?;
+
     Ok(())
 }
 
@@ -103,21 +124,24 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn test_encrypt_decrypt_roundtrip() {
-        // Create identities
-        let sender = Identity::generate();
-        let recipient = Identity::generate();
-
-        // Create test directory
+    fn make_test_dir(prefix: &str) -> std::path::PathBuf {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let test_dir = temp_dir().join(format!("qv_vault_test_{}", timestamp));
-        fs::create_dir_all(&test_dir).unwrap();
+        let dir = temp_dir().join(format!("qv_{}_{}", prefix, timestamp));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
-        // Create test file
+    // ───── Basic roundtrip tests ─────
+
+    #[test]
+    fn test_encrypt_decrypt_roundtrip() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("roundtrip");
+
         let plaintext = b"Hello, quantum-resistant world! This is a test message.";
         let input_path = test_dir.join("test_input.txt");
         let vault_path = test_dir.join("test_input.txt.qvault");
@@ -125,7 +149,6 @@ mod tests {
 
         fs::write(&input_path, plaintext).unwrap();
 
-        // Encrypt
         encrypt_file(
             &input_path,
             &vault_path,
@@ -133,12 +156,10 @@ mod tests {
             &recipient.recipient_public(),
         ).expect("Encryption failed");
 
-        // Verify vault file exists and is larger than input
         assert!(vault_path.exists());
         let vault_size = fs::metadata(&vault_path).unwrap().len();
         assert!(vault_size > plaintext.len() as u64);
 
-        // Decrypt
         decrypt_file(
             &vault_path,
             &output_path,
@@ -146,26 +167,164 @@ mod tests {
             &sender.sender_public(),
         ).expect("Decryption failed");
 
-        // Verify output matches input
         let decrypted = fs::read(&output_path).unwrap();
         assert_eq!(decrypted, plaintext);
+        assert!(!test_dir.join("test_output.qvault_tmp").exists());
 
-        // Cleanup
         let _ = fs::remove_dir_all(&test_dir);
     }
 
     #[test]
-    fn test_wrong_recipient_fails() {
-        let sender = Identity::generate();
-        let recipient = Identity::generate();
-        let wrong_recipient = Identity::generate();
+    fn test_empty_file_roundtrip() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("empty");
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let test_dir = temp_dir().join(format!("qv_wrong_test_{}", timestamp));
-        fs::create_dir_all(&test_dir).unwrap();
+        let input_path = test_dir.join("empty.txt");
+        let vault_path = test_dir.join("empty.txt.qvault");
+        let output_path = test_dir.join("empty_out.txt");
+
+        fs::write(&input_path, b"").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).expect("Encrypt empty failed");
+
+        decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        ).expect("Decrypt empty failed");
+
+        let decrypted = fs::read(&output_path).unwrap();
+        assert_eq!(decrypted, b"");
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_single_byte_roundtrip() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("single_byte");
+
+        let input_path = test_dir.join("one.bin");
+        let vault_path = test_dir.join("one.bin.qvault");
+        let output_path = test_dir.join("one_out.bin");
+
+        fs::write(&input_path, &[0x42]).unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        ).unwrap();
+
+        assert_eq!(fs::read(&output_path).unwrap(), vec![0x42]);
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_binary_data_all_byte_values() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("binary");
+
+        // Create binary file with all 256 byte values repeated
+        let mut data: Vec<u8> = Vec::with_capacity(256 * 4);
+        for _ in 0..4 {
+            for b in 0u8..=255 {
+                data.push(b);
+            }
+        }
+
+        let input_path = test_dir.join("binary.bin");
+        let vault_path = test_dir.join("binary.bin.qvault");
+        let output_path = test_dir.join("binary_out.bin");
+
+        fs::write(&input_path, &data).unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        ).unwrap();
+
+        assert_eq!(fs::read(&output_path).unwrap(), data);
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_large_multi_chunk_roundtrip() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("large");
+
+        // 2x chunk size + partial = tests multi-chunk + final partial chunk
+        let size = encrypt_stream::CHUNK_SIZE * 2 + 12345;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+
+        let input_path = test_dir.join("large.bin");
+        let vault_path = test_dir.join("large.bin.qvault");
+        let output_path = test_dir.join("large_out.bin");
+
+        fs::write(&input_path, &data).unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).expect("Large encrypt failed");
+
+        decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        ).expect("Large decrypt failed");
+
+        let decrypted = fs::read(&output_path).unwrap();
+        assert_eq!(decrypted.len(), data.len());
+        assert_eq!(decrypted, data);
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_exact_chunk_boundary() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("boundary");
+
+        // Exactly 1 chunk size — tests boundary handling
+        let data: Vec<u8> = vec![0xAB; encrypt_stream::CHUNK_SIZE];
+
+        let input_path = test_dir.join("boundary.bin");
+        let vault_path = test_dir.join("boundary.bin.qvault");
+        let output_path = test_dir.join("boundary_out.bin");
+
+        fs::write(&input_path, &data).unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        ).unwrap();
+
+        assert_eq!(fs::read(&output_path).unwrap(), data);
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    // ───── Authentication / security tests ─────
+
+    #[test]
+    fn test_wrong_recipient_fails() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let wrong_recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("wrong_recip");
 
         let input_path = test_dir.join("test.txt");
         let vault_path = test_dir.join("test.qvault");
@@ -173,25 +332,231 @@ mod tests {
 
         fs::write(&input_path, b"Secret data").unwrap();
 
-        // Encrypt to correct recipient
         encrypt_file(
-            &input_path,
-            &vault_path,
-            &sender,
-            &recipient.recipient_public(),
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
         ).unwrap();
 
-        // Try to decrypt with wrong recipient
         let result = decrypt_file(
-            &vault_path,
-            &output_path,
-            &wrong_recipient,
-            &sender.sender_public(),
+            &vault_path, &output_path, &wrong_recipient, &sender.sender_public(),
         );
 
-        // Should fail (decryption error due to wrong key)
         assert!(result.is_err());
+        assert!(!test_dir.join("test_out.qvault_tmp").exists());
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_wrong_sender_signature_rejected() {
+        let sender = Identity::generate().unwrap();
+        let wrong_sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("wrong_sender");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path = test_dir.join("test.qvault");
+        let output_path = test_dir.join("test_out.txt");
+
+        fs::write(&input_path, b"Authenticated data").unwrap();
+
+        // Encrypt with real sender
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        // Try to decrypt with wrong sender's public key
+        let result = decrypt_file(
+            &vault_path, &output_path, &recipient, &wrong_sender.sender_public(),
+        );
+
+        assert!(result.is_err(), "Should reject wrong sender signature");
+        // Verify it's a signature error specifically
+        match result.unwrap_err() {
+            VaultError::InvalidSignature => {},
+            other => panic!("Expected InvalidSignature, got: {:?}", other),
+        }
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_detected() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("tamper_ct");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path = test_dir.join("test.qvault");
+        let output_path = test_dir.join("test_out.txt");
+
+        fs::write(&input_path, b"Integrity-protected data").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        // Tamper with the encrypted payload (last 100 bytes are in ciphertext region)
+        let mut vault_data = fs::read(&vault_path).unwrap();
+        let len = vault_data.len();
+        if len > 100 {
+            vault_data[len - 50] ^= 0xFF; // flip bits in ciphertext
+        }
+        fs::write(&vault_path, &vault_data).unwrap();
+
+        let result = decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        );
+
+        assert!(result.is_err(), "Tampered ciphertext should be rejected");
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_tampered_magic_rejected() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("tamper_magic");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path = test_dir.join("test.qvault");
+        let output_path = test_dir.join("test_out.txt");
+
+        fs::write(&input_path, b"data").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        // Tamper with magic bytes
+        let mut vault_data = fs::read(&vault_path).unwrap();
+        vault_data[0] = b'X'; // break "QVLT" magic
+        fs::write(&vault_path, &vault_data).unwrap();
+
+        let result = decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        );
+
+        assert!(matches!(result, Err(VaultError::InvalidFormat)));
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_truncated_vault_rejected() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("truncated");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path = test_dir.join("test.qvault");
+        let output_path = test_dir.join("test_out.txt");
+
+        fs::write(&input_path, b"Data that will be truncated").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        // Truncate the vault file to just the header (cut off ciphertext)
+        let vault_data = fs::read(&vault_path).unwrap();
+        let truncated = &vault_data[..vault_data.len() / 2];
+        fs::write(&vault_path, truncated).unwrap();
+
+        let result = decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        );
+
+        assert!(result.is_err(), "Truncated vault should fail");
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_version_mismatch_rejected() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("version");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path = test_dir.join("test.qvault");
+        let output_path = test_dir.join("test_out.txt");
+
+        fs::write(&input_path, b"version test").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        // Change version bytes (bytes 4-5 after QVLT magic)
+        let mut vault_data = fs::read(&vault_path).unwrap();
+        vault_data[4] = 0x00;
+        vault_data[5] = 0x01; // version 1 instead of 3
+        fs::write(&vault_path, &vault_data).unwrap();
+
+        let result = decrypt_file(
+            &vault_path, &output_path, &recipient, &sender.sender_public(),
+        );
+
+        assert!(matches!(result, Err(VaultError::UnsupportedVersion)));
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    // ───── Consistency tests ─────
+
+    #[test]
+    fn test_multiple_encryptions_produce_different_ciphertext() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("nondeterministic");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path1 = test_dir.join("test1.qvault");
+        let vault_path2 = test_dir.join("test2.qvault");
+
+        fs::write(&input_path, b"Same plaintext twice").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path1, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path2, &sender, &recipient.recipient_public(),
+        ).unwrap();
+
+        let ct1 = fs::read(&vault_path1).unwrap();
+        let ct2 = fs::read(&vault_path2).unwrap();
+
+        // Same plaintext should produce different ciphertext (random ephemeral keys, salt, nonce)
+        assert_ne!(ct1, ct2, "Encrypting the same file twice must produce different ciphertext");
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_self_encrypt_decrypt() {
+        // Encrypt to yourself (sender == recipient)
+        let identity = Identity::generate().unwrap();
+        let test_dir = make_test_dir("self_encrypt");
+
+        let input_path = test_dir.join("self.txt");
+        let vault_path = test_dir.join("self.qvault");
+        let output_path = test_dir.join("self_out.txt");
+
+        fs::write(&input_path, b"Self-encrypted message").unwrap();
+
+        encrypt_file(
+            &input_path, &vault_path, &identity, &identity.recipient_public(),
+        ).unwrap();
+
+        decrypt_file(
+            &vault_path, &output_path, &identity, &identity.sender_public(),
+        ).unwrap();
+
+        assert_eq!(fs::read(&output_path).unwrap(), b"Self-encrypted message");
 
         let _ = fs::remove_dir_all(&test_dir);
     }
 }
+

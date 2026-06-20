@@ -15,7 +15,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Tauri (optional, feature-gated)
-tauri = { version = "1", optional = true, features = ["dialog-all", "fs-all", "path-all", "shell-open"] }
+tauri = { version = "1", optional = true, features = ["dialog-all", "fs-exists", "fs-read-file", "fs-write-file", "path-all", "shell-open"] }
 
 [build-dependencies]
 tauri-build = { version = "1", features = [] }

@@ -36,7 +36,8 @@ fn main() -> Result<()> {
             }
             let out_dir = &args[2];
             println!("[1/1] Generating new post-quantum identity at {}...", out_dir);
-            let identity = Identity::generate();
+            let identity = Identity::generate()
+                .context("Failed to generate identity")?;
             identity.save_to(Path::new(out_dir))
                 .context("Failed to save identity")?;
             println!("✓ Identity successfully generated and saved to: {}", out_dir);
