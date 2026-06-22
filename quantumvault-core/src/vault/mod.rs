@@ -3,19 +3,20 @@
 //! This module provides the high-level encrypt/decrypt operations
 //! for QuantumVault files (.qvault).
 
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::errors::VaultError;
+use rand::{rngs::OsRng, RngCore};
 
-mod header;
-mod encrypt_stream;
 mod decrypt_stream;
+mod encrypt_stream;
+mod header;
 
-pub use header::{VaultHeader, QVLT_MAGIC, VAULT_VERSION};
-pub use encrypt_stream::encrypt_stream;
 pub use decrypt_stream::decrypt_stream;
+pub use encrypt_stream::encrypt_stream;
+pub use header::{VaultHeader, QVLT_MAGIC, VAULT_VERSION};
 
 use crate::crypto::identity::Identity;
 use crate::crypto::public::{RecipientPublic, SenderPublic};
@@ -45,12 +46,7 @@ pub fn encrypt_file(
     header.write_to(&mut writer)?;
 
     // Encrypt stream
-    let res = encrypt_stream::encrypt_stream(
-        reader,
-        &mut writer,
-        &master_key,
-        &header.nonce_seed,
-    );
+    let res = encrypt_stream::encrypt_stream(reader, &mut writer, &master_key, &header.nonce_seed);
     use zeroize::Zeroize;
     master_key.zeroize();
 
@@ -76,24 +72,25 @@ pub fn decrypt_file(
     sender_pub: &SenderPublic,
 ) -> Result<(), VaultError> {
     let vault_file = File::open(vault)?;
-
-    // Write to a temp file first, then rename atomically on success
-    let temp_path = output.with_extension("qvault_tmp");
-    let temp_file = File::create(&temp_path)?;
+    let (temp_path, temp_file) = create_temp_output_file(output)?;
 
     let mut reader = BufReader::new(vault_file);
     let mut writer = BufWriter::new(temp_file);
 
     // Read and verify header
-    let (header, mut master_key) = VaultHeader::read_from(&mut reader, recipient, sender_pub)?;
+    let (header, mut master_key) = match VaultHeader::read_from(&mut reader, recipient, sender_pub)
+    {
+        Ok(result) => result,
+        Err(e) => {
+            drop(writer);
+            let _ = fs::remove_file(&temp_path);
+            return Err(e);
+        }
+    };
 
     // Decrypt stream
-    let res = decrypt_stream::decrypt_stream(
-        &mut reader,
-        &mut writer,
-        &master_key,
-        &header.nonce_seed,
-    );
+    let res =
+        decrypt_stream::decrypt_stream(&mut reader, &mut writer, &master_key, &header.nonce_seed);
     use zeroize::Zeroize;
     master_key.zeroize();
 
@@ -115,6 +112,33 @@ pub fn decrypt_file(
     })?;
 
     Ok(())
+}
+
+fn create_temp_output_file(output: &Path) -> Result<(PathBuf, File), VaultError> {
+    let parent = output.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("output");
+
+    for _ in 0..16 {
+        let suffix = OsRng.next_u64();
+        let temp_path = parent.join(format!(".{}.{}.qvault_tmp", file_name, suffix));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+        {
+            Ok(file) => return Ok((temp_path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(VaultError::Io(e)),
+        }
+    }
+
+    Err(VaultError::Io(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a unique temporary output file",
+    )))
 }
 
 #[cfg(test)]
@@ -154,7 +178,8 @@ mod tests {
             &vault_path,
             &sender,
             &recipient.recipient_public(),
-        ).expect("Encryption failed");
+        )
+        .expect("Encryption failed");
 
         assert!(vault_path.exists());
         let vault_size = fs::metadata(&vault_path).unwrap().len();
@@ -165,7 +190,8 @@ mod tests {
             &output_path,
             &recipient,
             &sender.sender_public(),
-        ).expect("Decryption failed");
+        )
+        .expect("Decryption failed");
 
         let decrypted = fs::read(&output_path).unwrap();
         assert_eq!(decrypted, plaintext);
@@ -187,12 +213,20 @@ mod tests {
         fs::write(&input_path, b"").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).expect("Encrypt empty failed");
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .expect("Encrypt empty failed");
 
         decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
-        ).expect("Decrypt empty failed");
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        )
+        .expect("Decrypt empty failed");
 
         let decrypted = fs::read(&output_path).unwrap();
         assert_eq!(decrypted, b"");
@@ -213,12 +247,20 @@ mod tests {
         fs::write(&input_path, &[0x42]).unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
-        ).unwrap();
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(&output_path).unwrap(), vec![0x42]);
 
@@ -246,12 +288,20 @@ mod tests {
         fs::write(&input_path, &data).unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
-        ).unwrap();
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(&output_path).unwrap(), data);
 
@@ -275,12 +325,20 @@ mod tests {
         fs::write(&input_path, &data).unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).expect("Large encrypt failed");
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .expect("Large encrypt failed");
 
         decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
-        ).expect("Large decrypt failed");
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        )
+        .expect("Large decrypt failed");
 
         let decrypted = fs::read(&output_path).unwrap();
         assert_eq!(decrypted.len(), data.len());
@@ -305,12 +363,20 @@ mod tests {
         fs::write(&input_path, &data).unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
-        ).unwrap();
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(&output_path).unwrap(), data);
 
@@ -333,11 +399,18 @@ mod tests {
         fs::write(&input_path, b"Secret data").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         let result = decrypt_file(
-            &vault_path, &output_path, &wrong_recipient, &sender.sender_public(),
+            &vault_path,
+            &output_path,
+            &wrong_recipient,
+            &sender.sender_public(),
         );
 
         assert!(result.is_err());
@@ -361,18 +434,25 @@ mod tests {
 
         // Encrypt with real sender
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         // Try to decrypt with wrong sender's public key
         let result = decrypt_file(
-            &vault_path, &output_path, &recipient, &wrong_sender.sender_public(),
+            &vault_path,
+            &output_path,
+            &recipient,
+            &wrong_sender.sender_public(),
         );
 
         assert!(result.is_err(), "Should reject wrong sender signature");
         // Verify it's a signature error specifically
         match result.unwrap_err() {
-            VaultError::InvalidSignature => {},
+            VaultError::InvalidSignature => {}
             other => panic!("Expected InvalidSignature, got: {:?}", other),
         }
 
@@ -392,8 +472,12 @@ mod tests {
         fs::write(&input_path, b"Integrity-protected data").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         // Tamper with the encrypted payload (last 100 bytes are in ciphertext region)
         let mut vault_data = fs::read(&vault_path).unwrap();
@@ -404,7 +488,10 @@ mod tests {
         fs::write(&vault_path, &vault_data).unwrap();
 
         let result = decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
         );
 
         assert!(result.is_err(), "Tampered ciphertext should be rejected");
@@ -425,8 +512,12 @@ mod tests {
         fs::write(&input_path, b"data").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         // Tamper with magic bytes
         let mut vault_data = fs::read(&vault_path).unwrap();
@@ -434,7 +525,47 @@ mod tests {
         fs::write(&vault_path, &vault_data).unwrap();
 
         let result = decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        );
+
+        assert!(matches!(result, Err(VaultError::InvalidFormat)));
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_tampered_flags_rejected() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("tamper_flags");
+
+        let input_path = test_dir.join("test.txt");
+        let vault_path = test_dir.join("test.qvault");
+        let output_path = test_dir.join("test_out.txt");
+
+        fs::write(&input_path, b"data").unwrap();
+
+        encrypt_file(
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
+
+        // Change flags bytes (bytes 6-7 after magic and version).
+        let mut vault_data = fs::read(&vault_path).unwrap();
+        vault_data[7] = 0x01;
+        fs::write(&vault_path, &vault_data).unwrap();
+
+        let result = decrypt_file(
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
         );
 
         assert!(matches!(result, Err(VaultError::InvalidFormat)));
@@ -455,8 +586,12 @@ mod tests {
         fs::write(&input_path, b"Data that will be truncated").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         // Truncate the vault file to just the header (cut off ciphertext)
         let vault_data = fs::read(&vault_path).unwrap();
@@ -464,10 +599,53 @@ mod tests {
         fs::write(&vault_path, truncated).unwrap();
 
         let result = decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
         );
 
         assert!(result.is_err(), "Truncated vault should fail");
+
+        let _ = fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_truncated_at_chunk_boundary_rejected() {
+        let sender = Identity::generate().unwrap();
+        let recipient = Identity::generate().unwrap();
+        let test_dir = make_test_dir("truncated_boundary");
+
+        let input_path = test_dir.join("boundary.bin");
+        let vault_path = test_dir.join("boundary.qvault");
+        let output_path = test_dir.join("boundary_out.bin");
+
+        let data = vec![0xA5; encrypt_stream::CHUNK_SIZE];
+        fs::write(&input_path, &data).unwrap();
+
+        encrypt_file(
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
+
+        // Remove only the final authenticated EOF marker. Older stream handling
+        // accepted this as a clean EOF and returned the truncated plaintext.
+        let mut vault_data = fs::read(&vault_path).unwrap();
+        vault_data.truncate(vault_data.len() - (4 + 12 + 20));
+        fs::write(&vault_path, &vault_data).unwrap();
+
+        let result = decrypt_file(
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
+        );
+
+        assert!(matches!(result, Err(VaultError::UnexpectedEof)));
+        assert!(!output_path.exists());
 
         let _ = fs::remove_dir_all(&test_dir);
     }
@@ -485,8 +663,12 @@ mod tests {
         fs::write(&input_path, b"version test").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         // Change version bytes (bytes 4-5 after QVLT magic)
         let mut vault_data = fs::read(&vault_path).unwrap();
@@ -495,7 +677,10 @@ mod tests {
         fs::write(&vault_path, &vault_data).unwrap();
 
         let result = decrypt_file(
-            &vault_path, &output_path, &recipient, &sender.sender_public(),
+            &vault_path,
+            &output_path,
+            &recipient,
+            &sender.sender_public(),
         );
 
         assert!(matches!(result, Err(VaultError::UnsupportedVersion)));
@@ -518,18 +703,29 @@ mod tests {
         fs::write(&input_path, b"Same plaintext twice").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path1, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path1,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         encrypt_file(
-            &input_path, &vault_path2, &sender, &recipient.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path2,
+            &sender,
+            &recipient.recipient_public(),
+        )
+        .unwrap();
 
         let ct1 = fs::read(&vault_path1).unwrap();
         let ct2 = fs::read(&vault_path2).unwrap();
 
         // Same plaintext should produce different ciphertext (random ephemeral keys, salt, nonce)
-        assert_ne!(ct1, ct2, "Encrypting the same file twice must produce different ciphertext");
+        assert_ne!(
+            ct1, ct2,
+            "Encrypting the same file twice must produce different ciphertext"
+        );
 
         let _ = fs::remove_dir_all(&test_dir);
     }
@@ -547,16 +743,23 @@ mod tests {
         fs::write(&input_path, b"Self-encrypted message").unwrap();
 
         encrypt_file(
-            &input_path, &vault_path, &identity, &identity.recipient_public(),
-        ).unwrap();
+            &input_path,
+            &vault_path,
+            &identity,
+            &identity.recipient_public(),
+        )
+        .unwrap();
 
         decrypt_file(
-            &vault_path, &output_path, &identity, &identity.sender_public(),
-        ).unwrap();
+            &vault_path,
+            &output_path,
+            &identity,
+            &identity.sender_public(),
+        )
+        .unwrap();
 
         assert_eq!(fs::read(&output_path).unwrap(), b"Self-encrypted message");
 
         let _ = fs::remove_dir_all(&test_dir);
     }
 }
-

@@ -37,7 +37,7 @@ pub fn decrypt_stream<R: Read, W: Write>(
         // Read ciphertext length
         let ct_len = match read_u32(&mut reader) {
             Ok(v) => v as usize,
-            Err(VaultError::UnexpectedEof) => break, // clean EOF
+            Err(VaultError::UnexpectedEof) => return Err(VaultError::UnexpectedEof),
             Err(e) => return Err(e),
         };
 
@@ -62,9 +62,10 @@ pub fn decrypt_stream<R: Read, W: Write>(
             return Err(e.into());
         }
 
-        // Verify nonce matches derived nonce
+        // Verify nonce matches derived nonce (constant-time comparison)
         let expected_nonce = derive_nonce(nonce_seed, chunk_index)?;
-        if nonce != expected_nonce {
+        use subtle::ConstantTimeEq;
+        if nonce.ct_eq(&expected_nonce).unwrap_u8() != 1 {
             use zeroize::Zeroize;
             ciphertext.zeroize();
             return Err(VaultError::DecryptionFailed);
@@ -87,9 +88,8 @@ pub fn decrypt_stream<R: Read, W: Write>(
             return Err(VaultError::DecryptionFailed);
         }
 
-        let embedded_len = u32::from_be_bytes([
-            decrypted[0], decrypted[1], decrypted[2], decrypted[3],
-        ]) as usize;
+        let embedded_len =
+            u32::from_be_bytes([decrypted[0], decrypted[1], decrypted[2], decrypted[3]]) as usize;
 
         if decrypted.len() - 4 != embedded_len {
             use zeroize::Zeroize;
@@ -98,31 +98,39 @@ pub fn decrypt_stream<R: Read, W: Write>(
             return Err(VaultError::DecryptionFailed);
         }
 
+        if embedded_len == 0 {
+            use zeroize::Zeroize;
+            ciphertext.zeroize();
+            decrypted.zeroize();
+            ensure_no_trailing_data(&mut reader)?;
+            return Ok(());
+        }
+
         let write_res = writer.write_all(&decrypted[4..]);
         use zeroize::Zeroize;
         ciphertext.zeroize();
         decrypted.zeroize();
         write_res?;
 
-        chunk_index = chunk_index.checked_add(1)
+        chunk_index = chunk_index
+            .checked_add(1)
             .ok_or(VaultError::ChunkOverflow)?;
     }
-
-    Ok(())
 }
 
 /* ---------------- internal helpers ---------------- */
 
-fn derive_nonce(
-    nonce_seed: &[u8; 32],
-    index: u64,
-) -> Result<[u8; NONCE_SIZE], VaultError> {
-    let mut info = [0u8; 8];
-    info.copy_from_slice(&index.to_be_bytes());
+fn derive_nonce(nonce_seed: &[u8; 32], index: u64) -> Result<[u8; NONCE_SIZE], VaultError> {
+    use hkdf::Hkdf;
+    use sha3::Sha3_256;
 
-    let full = crate::crypto::kdf::hkdf_expand(nonce_seed, &info, NONCE_SIZE)?;
+    let info = index.to_be_bytes();
+    // Use proper HKDF extract+expand (RFC 5869) rather than from_prk(),
+    // which expects input that has already been through the extract step.
+    let hk = Hkdf::<Sha3_256>::new(None, nonce_seed);
     let mut nonce = [0u8; NONCE_SIZE];
-    nonce.copy_from_slice(&full);
+    hk.expand(&info, &mut nonce)
+        .map_err(|_| VaultError::CryptoError)?;
     Ok(nonce)
 }
 
@@ -148,9 +156,16 @@ fn read_u32<R: Read>(r: &mut R) -> Result<u32, VaultError> {
     let mut buf = [0u8; 4];
     match r.read_exact(&mut buf) {
         Ok(()) => Ok(u32::from_be_bytes(buf)),
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            Err(VaultError::UnexpectedEof)
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Err(VaultError::UnexpectedEof),
+        Err(e) => Err(VaultError::Io(e)),
+    }
+}
+
+fn ensure_no_trailing_data<R: Read>(reader: &mut R) -> Result<(), VaultError> {
+    let mut trailing = [0u8; 1];
+    match reader.read(&mut trailing) {
+        Ok(0) => Ok(()),
+        Ok(_) => Err(VaultError::InvalidFormat),
         Err(e) => Err(VaultError::Io(e)),
     }
 }

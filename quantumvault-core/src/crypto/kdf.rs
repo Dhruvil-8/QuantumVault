@@ -17,9 +17,12 @@ pub fn derive_master_key(classic: &[u8], quantum: &[u8], salt: &[u8; 32]) -> [u8
     out
 }
 
-pub fn hkdf_expand(prk: &[u8], info: &[u8], len: usize) -> Result<Vec<u8>, crate::errors::VaultError> {
-    let hk = Hkdf::<Sha3_256>::from_prk(prk)
-        .map_err(|_| crate::errors::VaultError::CryptoError)?;
+pub fn hkdf_expand(
+    prk: &[u8],
+    info: &[u8],
+    len: usize,
+) -> Result<Vec<u8>, crate::errors::VaultError> {
+    let hk = Hkdf::<Sha3_256>::from_prk(prk).map_err(|_| crate::errors::VaultError::CryptoError)?;
     let mut out = vec![0u8; len];
     if let Err(_) = hk.expand(info, &mut out) {
         out.zeroize();

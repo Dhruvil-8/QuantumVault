@@ -37,6 +37,8 @@ impl Drop for MlDsaPrivateKey {
                 std::mem::size_of::<ml_dsa_65::PrivateKey>(),
             );
         }
+        // Prevent the compiler from eliding the zero-write as a dead store.
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -46,10 +48,8 @@ impl MlDsaPublicKey {
         if bytes.len() != PUBLIC_KEY_SIZE {
             return Err("Invalid public key size");
         }
-        let arr: [u8; PUBLIC_KEY_SIZE] = bytes.try_into()
-            .map_err(|_| "Invalid public key size")?;
-        let pk = ml_dsa_65::PublicKey::try_from_bytes(arr)
-            .map_err(|_| "Invalid public key")?;
+        let arr: [u8; PUBLIC_KEY_SIZE] = bytes.try_into().map_err(|_| "Invalid public key size")?;
+        let pk = ml_dsa_65::PublicKey::try_from_bytes(arr).map_err(|_| "Invalid public key")?;
         Ok(Self(pk))
     }
 
@@ -65,10 +65,9 @@ impl MlDsaPrivateKey {
         if bytes.len() != PRIVATE_KEY_SIZE {
             return Err("Invalid private key size");
         }
-        let arr: [u8; PRIVATE_KEY_SIZE] = bytes.try_into()
-            .map_err(|_| "Invalid private key size")?;
-        let sk = ml_dsa_65::PrivateKey::try_from_bytes(arr)
-            .map_err(|_| "Invalid private key")?;
+        let arr: [u8; PRIVATE_KEY_SIZE] =
+            bytes.try_into().map_err(|_| "Invalid private key size")?;
+        let sk = ml_dsa_65::PrivateKey::try_from_bytes(arr).map_err(|_| "Invalid private key")?;
         Ok(Self(sk))
     }
 
@@ -84,8 +83,7 @@ impl MlDsaSignature {
         if bytes.len() != SIGNATURE_SIZE {
             return Err("Invalid signature size");
         }
-        let arr: [u8; SIGNATURE_SIZE] = bytes.try_into()
-            .map_err(|_| "Invalid signature size")?;
+        let arr: [u8; SIGNATURE_SIZE] = bytes.try_into().map_err(|_| "Invalid signature size")?;
         Ok(Self(arr))
     }
 
@@ -104,7 +102,9 @@ pub fn generate() -> Result<(MlDsaPublicKey, MlDsaPrivateKey), VaultError> {
 /// Sign a message using the private key
 pub fn sign(message: &[u8], sk: &MlDsaPrivateKey) -> Result<MlDsaSignature, VaultError> {
     // Empty context per NIST spec for basic signatures
-    let sig_bytes = sk.0.try_sign(message, &[]).map_err(|_| VaultError::SigningFailed)?;
+    let sig_bytes =
+        sk.0.try_sign(message, &[])
+            .map_err(|_| VaultError::SigningFailed)?;
     Ok(MlDsaSignature(sig_bytes))
 }
 
@@ -122,10 +122,10 @@ mod tests {
     fn test_keygen_sign_verify() {
         let (pk, sk) = generate().unwrap();
         let message = b"Hello, quantum-resistant world!";
-        
+
         let signature = sign(message, &sk).unwrap();
         assert!(verify(message, &signature, &pk));
-        
+
         // Test with wrong message
         let wrong_message = b"Wrong message";
         assert!(!verify(wrong_message, &signature, &pk));
@@ -176,12 +176,12 @@ mod tests {
     #[test]
     fn test_key_serialization() {
         let (pk, sk) = generate().unwrap();
-        
+
         // Round-trip public key
         let pk_bytes = pk.as_bytes();
         let pk2 = MlDsaPublicKey::from_bytes(&pk_bytes).unwrap();
         assert_eq!(pk.as_bytes(), pk2.as_bytes());
-        
+
         // Round-trip private key
         let sk_bytes = sk.as_bytes();
         let sk2 = MlDsaPrivateKey::from_bytes(&sk_bytes).unwrap();
@@ -192,11 +192,11 @@ mod tests {
     fn test_signature_serialization() {
         let (pk, sk) = generate().unwrap();
         let message = b"Test message";
-        
+
         let sig = sign(message, &sk).unwrap();
         let sig_bytes = sig.as_bytes().to_vec();
         let sig2 = MlDsaSignature::from_bytes(&sig_bytes).unwrap();
-        
+
         assert!(verify(message, &sig2, &pk));
     }
 
@@ -235,4 +235,3 @@ mod tests {
         assert_ne!(sig1.as_bytes(), sig2.as_bytes());
     }
 }
-

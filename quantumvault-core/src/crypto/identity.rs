@@ -9,9 +9,10 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-use crate::crypto::{x25519, ml_kem, ml_dsa};
+use crate::crypto::{ml_dsa, ml_kem, x25519};
 use crate::errors::VaultError;
-use x25519_dalek::{StaticSecret, PublicKey};
+use rand::RngCore;
+use x25519_dalek::{PublicKey, StaticSecret};
 
 /// A complete cryptographic identity
 pub struct Identity {
@@ -24,10 +25,12 @@ pub struct Identity {
 
 impl Drop for Identity {
     fn drop(&mut self) {
+        // Explicitly take the x25519 secret to trigger its Zeroize-on-Drop.
         // ml_kem_dk and ml_dsa_sk have their own Drop impls that zeroize.
-        // x25519 StaticSecret is zeroized by x25519_dalek on drop.
-        // We explicitly drop in order to make the intent clear.
-        // The individual Drop impls handle actual zeroization.
+        let _ = self.x25519.secret.take();
+
+        // Ensure the compiler doesn't elide the inner Drop impls.
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -66,7 +69,7 @@ impl Identity {
     // ───── Persistence ─────
 
     /// Save identity to disk
-    /// 
+    ///
     /// Directory structure:
     /// ```text
     /// base/
@@ -122,7 +125,7 @@ impl Identity {
         let mut x25519_priv_bytes = read_file(enc.join("x25519.priv"))?;
         let x25519_secret = StaticSecret::from(
             <[u8; 32]>::try_from(x25519_priv_bytes.as_slice())
-                .map_err(|_| VaultError::InvalidFormat)?
+                .map_err(|_| VaultError::InvalidFormat)?,
         );
         use zeroize::Zeroize;
         x25519_priv_bytes.zeroize();
@@ -181,21 +184,36 @@ fn write_private_file(path: impl AsRef<Path>, data: &[u8]) -> Result<(), VaultEr
     }
     #[cfg(windows)]
     {
-        // Write the file first
-        let mut f = File::create(path.as_ref())?;
+        // Write to a temp file first, then set restrictive ACLs, then rename.
+        // This eliminates the TOCTOU race where the key is world-readable
+        // between File::create and icacls.
+        let parent = path.as_ref().parent().unwrap_or_else(|| Path::new("."));
+        let temp_name = format!(
+            ".qv_priv_{}.tmp",
+            rand::rngs::OsRng.next_u64()
+        );
+        let temp_path = parent.join(&temp_name);
+
+        // Write key material to temp file
+        let mut f = File::create(&temp_path)?;
         f.write_all(data)?;
         drop(f);
 
-        // Restrict ACLs: remove inherited permissions, grant only current user full control.
-        // Uses icacls.exe which is available on all modern Windows versions (Vista+).
-        if let Ok(username) = std::env::var("USERNAME") {
-            let path_str = path.as_ref().to_string_lossy();
-            let _ = std::process::Command::new("icacls")
-                .args([&*path_str, "/inheritance:r"])
-                .output();
-            let _ = std::process::Command::new("icacls")
-                .args([&*path_str, "/grant:r", &format!("{}:F", username)])
-                .output();
+        // Restrict ACLs on temp file BEFORE it has the final name
+        let principal = current_windows_user_principal()?;
+        if let Err(e) = run_icacls(&temp_path, &["/grant:r", &format!("{}:F", principal)]) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(e);
+        }
+        if let Err(e) = run_icacls(&temp_path, &["/inheritance:r"]) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(e);
+        }
+
+        // Atomically rename to final path
+        if let Err(e) = fs::rename(&temp_path, path.as_ref()) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(VaultError::Io(e));
         }
     }
     #[cfg(not(any(unix, windows)))]
@@ -204,6 +222,48 @@ fn write_private_file(path: impl AsRef<Path>, data: &[u8]) -> Result<(), VaultEr
         f.write_all(data)?;
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn current_windows_user_principal() -> Result<String, VaultError> {
+    let output = std::process::Command::new("whoami")
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(sid) = stdout.split('"').find(|part| part.starts_with("S-1-")) {
+            return Ok(format!("*{}", sid));
+        }
+    }
+
+    match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
+        (Ok(domain), Ok(user)) if !domain.is_empty() && !user.is_empty() => {
+            Ok(format!("{}\\{}", domain, user))
+        }
+        (_, Ok(user)) if !user.is_empty() => Ok(user),
+        _ => Err(VaultError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "could not determine current Windows user for private key ACL",
+        ))),
+    }
+}
+
+#[cfg(windows)]
+fn run_icacls(path: &Path, args: &[&str]) -> Result<(), VaultError> {
+    let output = std::process::Command::new("icacls")
+        .arg(path)
+        .args(args)
+        .output()?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(VaultError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -221,17 +281,19 @@ mod tests {
     #[test]
     fn test_identity_save_load() {
         let identity = Identity::generate().unwrap();
-        
+
         // Create unique temp directory
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let test_dir = temp_dir().join(format!("qv_test_{}", timestamp));
-        
+
         // Save
-        identity.save_to(&test_dir).expect("Failed to save identity");
-        
+        identity
+            .save_to(&test_dir)
+            .expect("Failed to save identity");
+
         // Verify files exist
         assert!(test_dir.join("encryption/x25519.pub").exists());
         assert!(test_dir.join("encryption/x25519.priv").exists());
@@ -239,24 +301,18 @@ mod tests {
         assert!(test_dir.join("encryption/ml_kem.priv").exists());
         assert!(test_dir.join("signing/ml_dsa.pub").exists());
         assert!(test_dir.join("signing/ml_dsa.priv").exists());
-        
+
         // Load
         let loaded = Identity::load(&test_dir).expect("Failed to load identity");
-        
+
         // Verify keys match
         assert_eq!(
             identity.x25519.public.as_bytes(),
             loaded.x25519.public.as_bytes()
         );
-        assert_eq!(
-            identity.ml_kem_ek.as_bytes(),
-            loaded.ml_kem_ek.as_bytes()
-        );
-        assert_eq!(
-            identity.ml_dsa_pk.as_bytes(),
-            loaded.ml_dsa_pk.as_bytes()
-        );
-        
+        assert_eq!(identity.ml_kem_ek.as_bytes(), loaded.ml_kem_ek.as_bytes());
+        assert_eq!(identity.ml_dsa_pk.as_bytes(), loaded.ml_dsa_pk.as_bytes());
+
         // Cleanup
         let _ = fs::remove_dir_all(&test_dir);
     }

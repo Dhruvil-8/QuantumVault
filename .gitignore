@@ -3,7 +3,6 @@ target/
 target_tmp/
 target_random_build/
 **/*.rs.bk
-Cargo.lock
 
 # Test outputs and keys (CRITICAL: Do not upload test keys to GitHub)
 /test_output/

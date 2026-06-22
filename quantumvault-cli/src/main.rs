@@ -1,7 +1,7 @@
+use anyhow::{anyhow, Context, Result};
+use quantumvault_core::{decrypt_file, encrypt_file, Identity, RecipientPublic, SenderPublic};
 use std::env;
 use std::path::Path;
-use anyhow::{anyhow, Context, Result};
-use quantumvault_core::{Identity, RecipientPublic, SenderPublic, encrypt_file, decrypt_file};
 
 fn print_usage() {
     println!("╔══════════════════════════════════════════════════════════════╗");
@@ -32,15 +32,23 @@ fn main() -> Result<()> {
     match command.as_str() {
         "keygen" => {
             if args.len() < 3 {
-                return Err(anyhow!("Missing output directory path. Usage: quantumvault-cli keygen <out-dir>"));
+                return Err(anyhow!(
+                    "Missing output directory path. Usage: quantumvault-cli keygen <out-dir>"
+                ));
             }
             let out_dir = &args[2];
-            println!("[1/1] Generating new post-quantum identity at {}...", out_dir);
-            let identity = Identity::generate()
-                .context("Failed to generate identity")?;
-            identity.save_to(Path::new(out_dir))
+            println!(
+                "[1/1] Generating new post-quantum identity at {}...",
+                out_dir
+            );
+            let identity = Identity::generate().context("Failed to generate identity")?;
+            identity
+                .save_to(Path::new(out_dir))
                 .context("Failed to save identity")?;
-            println!("✓ Identity successfully generated and saved to: {}", out_dir);
+            println!(
+                "✓ Identity successfully generated and saved to: {}",
+                out_dir
+            );
         }
         "encrypt" => {
             let mut input = None;
@@ -52,20 +60,36 @@ fn main() -> Result<()> {
             while i < args.len() {
                 match args[i].as_str() {
                     "-i" | "--input" => {
-                        if i + 1 < args.len() { input = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -i/--input")); }
+                        if i + 1 < args.len() {
+                            input = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -i/--input"));
+                        }
                     }
                     "-o" | "--output" => {
-                        if i + 1 < args.len() { output = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -o/--output")); }
+                        if i + 1 < args.len() {
+                            output = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -o/--output"));
+                        }
                     }
                     "-s" | "--sender" => {
-                        if i + 1 < args.len() { sender = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -s/--sender")); }
+                        if i + 1 < args.len() {
+                            sender = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -s/--sender"));
+                        }
                     }
                     "-r" | "--recipient" => {
-                        if i + 1 < args.len() { recipient = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -r/--recipient")); }
+                        if i + 1 < args.len() {
+                            recipient = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -r/--recipient"));
+                        }
                     }
                     _ => {
                         return Err(anyhow!("Unknown parameter: {}", args[i]));
@@ -75,12 +99,14 @@ fn main() -> Result<()> {
 
             let input = input.ok_or_else(|| anyhow!("Input path is required (-i/--input)"))?;
             let output = output.ok_or_else(|| anyhow!("Output path is required (-o/--output)"))?;
-            let sender_path = sender.ok_or_else(|| anyhow!("Sender identity path is required (-s/--sender)"))?;
-            let recipient_pub_path = recipient.ok_or_else(|| anyhow!("Recipient public key path is required (-r/--recipient)"))?;
+            let sender_path =
+                sender.ok_or_else(|| anyhow!("Sender identity path is required (-s/--sender)"))?;
+            let recipient_pub_path = recipient
+                .ok_or_else(|| anyhow!("Recipient public key path is required (-r/--recipient)"))?;
 
             println!("Encrypting file {} -> {} ...", input, output);
-            let sender_identity = Identity::load(Path::new(sender_path))
-                .context("Failed to load sender identity")?;
+            let sender_identity =
+                Identity::load(Path::new(sender_path)).context("Failed to load sender identity")?;
             let recipient_pub = RecipientPublic::load(Path::new(recipient_pub_path))
                 .context("Failed to load recipient public keys")?;
 
@@ -89,7 +115,8 @@ fn main() -> Result<()> {
                 Path::new(output),
                 &sender_identity,
                 &recipient_pub,
-            ).context("Encryption failed")?;
+            )
+            .context("Encryption failed")?;
 
             println!("✓ Encryption complete!");
         }
@@ -103,20 +130,36 @@ fn main() -> Result<()> {
             while i < args.len() {
                 match args[i].as_str() {
                     "-i" | "--input" => {
-                        if i + 1 < args.len() { input = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -i/--input")); }
+                        if i + 1 < args.len() {
+                            input = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -i/--input"));
+                        }
                     }
                     "-o" | "--output" => {
-                        if i + 1 < args.len() { output = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -o/--output")); }
+                        if i + 1 < args.len() {
+                            output = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -o/--output"));
+                        }
                     }
                     "-s" | "--sender" => {
-                        if i + 1 < args.len() { sender = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -s/--sender")); }
+                        if i + 1 < args.len() {
+                            sender = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -s/--sender"));
+                        }
                     }
                     "-r" | "--recipient" => {
-                        if i + 1 < args.len() { recipient = Some(&args[i+1]); i += 2; }
-                        else { return Err(anyhow!("Missing value for -r/--recipient")); }
+                        if i + 1 < args.len() {
+                            recipient = Some(&args[i + 1]);
+                            i += 2;
+                        } else {
+                            return Err(anyhow!("Missing value for -r/--recipient"));
+                        }
                     }
                     _ => {
                         return Err(anyhow!("Unknown parameter: {}", args[i]));
@@ -126,8 +169,10 @@ fn main() -> Result<()> {
 
             let input = input.ok_or_else(|| anyhow!("Input path is required (-i/--input)"))?;
             let output = output.ok_or_else(|| anyhow!("Output path is required (-o/--output)"))?;
-            let sender_pub_path = sender.ok_or_else(|| anyhow!("Sender public key path is required (-s/--sender)"))?;
-            let recipient_path = recipient.ok_or_else(|| anyhow!("Recipient identity path is required (-r/--recipient)"))?;
+            let sender_pub_path = sender
+                .ok_or_else(|| anyhow!("Sender public key path is required (-s/--sender)"))?;
+            let recipient_path = recipient
+                .ok_or_else(|| anyhow!("Recipient identity path is required (-r/--recipient)"))?;
 
             println!("Decrypting file {} -> {} ...", input, output);
             let recipient_identity = Identity::load(Path::new(recipient_path))
@@ -140,7 +185,8 @@ fn main() -> Result<()> {
                 Path::new(output),
                 &recipient_identity,
                 &sender_pub,
-            ).context("Decryption failed")?;
+            )
+            .context("Decryption failed")?;
 
             println!("✓ Decryption complete!");
         }

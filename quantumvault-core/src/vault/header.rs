@@ -10,14 +10,14 @@
 
 use std::io::{Read, Write};
 
-use crate::errors::VaultError;
 use crate::crypto::{
     identity::Identity,
-    public::{RecipientPublic, SenderPublic},
-    ml_kem::{self, MlKemEncapsulationKey, MlKemCiphertext, CIPHERTEXT_SIZE},
-    ml_dsa::{self, MlDsaPublicKey, MlDsaSignature, SIGNATURE_SIZE},
     kdf,
+    ml_dsa::{self, MlDsaPublicKey, MlDsaSignature, SIGNATURE_SIZE},
+    ml_kem::{self, MlKemCiphertext, MlKemEncapsulationKey, CIPHERTEXT_SIZE},
+    public::{RecipientPublic, SenderPublic},
 };
+use crate::errors::VaultError;
 use rand::rngs::OsRng;
 use rand::RngCore;
 
@@ -25,7 +25,7 @@ use rand::RngCore;
 pub const QVLT_MAGIC: &[u8; 4] = b"QVLT";
 
 /// Current vault format version
-pub const VAULT_VERSION: u16 = 3; // v3: HKDF salt, hardened format
+pub const VAULT_VERSION: u16 = 5; // v5: fixed HKDF nonce derivation (proper extract+expand)
 
 /// Vault header structure
 pub struct VaultHeader {
@@ -66,7 +66,8 @@ impl VaultHeader {
         OsRng.fill_bytes(&mut salt);
 
         // Derive hybrid master key with salt
-        let master_key = kdf::derive_master_key(x_shared.as_bytes(), ml_kem_shared.as_bytes(), &salt);
+        let master_key =
+            kdf::derive_master_key(x_shared.as_bytes(), ml_kem_shared.as_bytes(), &salt);
 
         // Generate nonce seed
         let mut nonce_seed = [0u8; 32];
@@ -74,9 +75,11 @@ impl VaultHeader {
 
         // Create unsigned header data for signing
         let ct_bytes = ct.as_bytes();
+        let flags = 0u16;
         let mut unsigned = Vec::new();
         write_prefix(
             &mut unsigned,
+            flags,
             &eph_pub.to_bytes(),
             &ct_bytes,
             &salt,
@@ -89,7 +92,7 @@ impl VaultHeader {
 
         let header = VaultHeader {
             version: VAULT_VERSION,
-            flags: 0,
+            flags,
             eph_x25519_pub: eph_pub.to_bytes(),
             ml_kem_ciphertext: ct_bytes.to_vec(),
             signature,
@@ -136,7 +139,10 @@ impl VaultHeader {
             return Err(VaultError::UnsupportedVersion);
         }
 
-        let _flags = read_u16(&mut r)?;
+        let flags = read_u16(&mut r)?;
+        if flags != 0 {
+            return Err(VaultError::InvalidFormat);
+        }
 
         // Read ephemeral X25519 public key
         let mut eph_pub = [0u8; 32];
@@ -168,12 +174,12 @@ impl VaultHeader {
 
         // Reconstruct signed data and verify signature
         let mut signed = Vec::new();
-        write_prefix(&mut signed, &eph_pub, &ct, &salt, &nonce_seed)?;
+        write_prefix(&mut signed, flags, &eph_pub, &ct, &salt, &nonce_seed)?;
 
-        let sender_pk = MlDsaPublicKey::from_bytes(&sender.ml_dsa_pub)
-            .map_err(|_| VaultError::CryptoError)?;
-        let signature_obj = MlDsaSignature::from_bytes(&sig)
-            .map_err(|_| VaultError::InvalidSignature)?;
+        let sender_pk =
+            MlDsaPublicKey::from_bytes(&sender.ml_dsa_pub).map_err(|_| VaultError::CryptoError)?;
+        let signature_obj =
+            MlDsaSignature::from_bytes(&sig).map_err(|_| VaultError::InvalidSignature)?;
 
         if !ml_dsa::verify(&signed, &signature_obj, &sender_pk) {
             return Err(VaultError::InvalidSignature);
@@ -184,17 +190,17 @@ impl VaultHeader {
         let x_shared = recipient.x25519.diffie_hellman_query(&eph_pk)?;
 
         // Decapsulate ML-KEM
-        let ml_kem_ct = MlKemCiphertext::from_bytes(&ct)
-            .map_err(|_| VaultError::InvalidFormat)?;
+        let ml_kem_ct = MlKemCiphertext::from_bytes(&ct).map_err(|_| VaultError::InvalidFormat)?;
         let ml_kem_shared = ml_kem::decapsulate(&ml_kem_ct, &recipient.ml_kem_dk)?;
 
         // Derive master key with salt
-        let master_key = kdf::derive_master_key(x_shared.as_bytes(), ml_kem_shared.as_bytes(), &salt);
+        let master_key =
+            kdf::derive_master_key(x_shared.as_bytes(), ml_kem_shared.as_bytes(), &salt);
 
         Ok((
             VaultHeader {
                 version,
-                flags: 0,
+                flags,
                 eph_x25519_pub: eph_pub,
                 ml_kem_ciphertext: ct,
                 signature: sig,
@@ -210,6 +216,7 @@ impl VaultHeader {
 /// Includes salt in the signed data to bind it cryptographically.
 fn write_prefix<W: Write>(
     mut w: W,
+    flags: u16,
     eph: &[u8; 32],
     ct: &[u8],
     salt: &[u8; 32],
@@ -217,7 +224,7 @@ fn write_prefix<W: Write>(
 ) -> Result<(), VaultError> {
     w.write_all(QVLT_MAGIC)?;
     w.write_all(&VAULT_VERSION.to_be_bytes())?;
-    w.write_all(&0u16.to_be_bytes())?; // flags
+    w.write_all(&flags.to_be_bytes())?;
     w.write_all(eph)?;
     w.write_all(&(ct.len() as u32).to_be_bytes())?;
     w.write_all(ct)?;
@@ -259,7 +266,8 @@ mod tests {
 
         // Read back
         let cursor = Cursor::new(buffer);
-        let (read_header, master_key2) = VaultHeader::read_from(cursor, &recipient, &sender_pub).unwrap();
+        let (read_header, master_key2) =
+            VaultHeader::read_from(cursor, &recipient, &sender_pub).unwrap();
 
         // Verify master keys match
         assert_eq!(master_key1, master_key2);

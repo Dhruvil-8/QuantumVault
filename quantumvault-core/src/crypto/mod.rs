@@ -6,9 +6,9 @@
 //! - X25519: Classical elliptic curve key exchange (hybrid layer)
 //! - HKDF-SHA3-256: Key derivation function
 
-pub mod x25519;
-pub mod ml_kem;
-pub mod ml_dsa;
-pub mod kdf;
 pub mod identity;
+pub mod kdf;
+pub mod ml_dsa;
+pub mod ml_kem;
 pub mod public;
+pub mod x25519;

@@ -3,10 +3,10 @@
 //! These structures hold only the public portions of keys,
 //! used for encrypting to recipients and verifying senders.
 
-use std::path::Path;
-use std::fs;
-use crate::errors::VaultError;
 use crate::crypto::identity::Identity;
+use crate::errors::VaultError;
+use std::fs;
+use std::path::Path;
 
 /// Public keys needed to encrypt a message to a recipient
 #[derive(Clone)]
@@ -25,9 +25,16 @@ pub struct SenderPublic {
 }
 
 impl RecipientPublic {
-    /// Load recipient's public keys from disk
+    /// Load recipient's public keys from disk.
+    /// Supports either the base identity directory (looking inside 'encryption')
+    /// or the shared 'encryption' folder directly.
     pub fn load(base: impl AsRef<Path>) -> Result<Self, VaultError> {
-        let enc = base.as_ref().join("encryption");
+        let base_path = base.as_ref();
+        let enc = if base_path.join("x25519.pub").exists() {
+            base_path.to_path_buf()
+        } else {
+            base_path.join("encryption")
+        };
         let x25519_pub = fs::read(enc.join("x25519.pub")).map_err(VaultError::Io)?;
         let ml_kem_pub = fs::read(enc.join("ml_kem.pub")).map_err(VaultError::Io)?;
         Ok(Self {
@@ -46,13 +53,18 @@ impl RecipientPublic {
 }
 
 impl SenderPublic {
-    /// Load sender's public signing key from disk
+    /// Load sender's public signing key from disk.
+    /// Supports either the base identity directory (looking inside 'signing')
+    /// or the shared 'signing' folder directly.
     pub fn load(base: impl AsRef<Path>) -> Result<Self, VaultError> {
-        let sig = base.as_ref().join("signing");
+        let base_path = base.as_ref();
+        let sig = if base_path.join("ml_dsa.pub").exists() {
+            base_path.to_path_buf()
+        } else {
+            base_path.join("signing")
+        };
         let ml_dsa_pub = fs::read(sig.join("ml_dsa.pub")).map_err(VaultError::Io)?;
-        Ok(Self {
-            ml_dsa_pub,
-        })
+        Ok(Self { ml_dsa_pub })
     }
 
     /// Create from raw bytes
@@ -83,14 +95,14 @@ impl Identity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::ml_kem::ENCAPSULATION_KEY_SIZE;
     use crate::crypto::ml_dsa::PUBLIC_KEY_SIZE;
+    use crate::crypto::ml_kem::ENCAPSULATION_KEY_SIZE;
 
     #[test]
     fn test_recipient_public_from_identity() {
         let identity = Identity::generate().unwrap();
         let recipient = identity.recipient_public();
-        
+
         assert_eq!(recipient.x25519_pub.len(), 32);
         assert_eq!(recipient.ml_kem_pub.len(), ENCAPSULATION_KEY_SIZE);
     }
@@ -99,8 +111,7 @@ mod tests {
     fn test_sender_public_from_identity() {
         let identity = Identity::generate().unwrap();
         let sender = identity.sender_public();
-        
+
         assert_eq!(sender.ml_dsa_pub.len(), PUBLIC_KEY_SIZE);
     }
 }
-

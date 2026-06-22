@@ -55,6 +55,8 @@ impl Drop for MlKemDecapsulationKey {
                 std::mem::size_of::<ml_kem_1024::DecapsKey>(),
             );
         }
+        // Prevent the compiler from eliding the zero-write as a dead store.
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -64,10 +66,11 @@ impl MlKemEncapsulationKey {
         if bytes.len() != ENCAPSULATION_KEY_SIZE {
             return Err("Invalid encapsulation key size");
         }
-        let arr: [u8; ENCAPSULATION_KEY_SIZE] = bytes.try_into()
+        let arr: [u8; ENCAPSULATION_KEY_SIZE] = bytes
+            .try_into()
             .map_err(|_| "Invalid encapsulation key size")?;
-        let ek = ml_kem_1024::EncapsKey::try_from_bytes(arr)
-            .map_err(|_| "Invalid encapsulation key")?;
+        let ek =
+            ml_kem_1024::EncapsKey::try_from_bytes(arr).map_err(|_| "Invalid encapsulation key")?;
         Ok(Self(ek))
     }
 
@@ -83,10 +86,11 @@ impl MlKemDecapsulationKey {
         if bytes.len() != DECAPSULATION_KEY_SIZE {
             return Err("Invalid decapsulation key size");
         }
-        let arr: [u8; DECAPSULATION_KEY_SIZE] = bytes.try_into()
+        let arr: [u8; DECAPSULATION_KEY_SIZE] = bytes
+            .try_into()
             .map_err(|_| "Invalid decapsulation key size")?;
-        let dk = ml_kem_1024::DecapsKey::try_from_bytes(arr)
-            .map_err(|_| "Invalid decapsulation key")?;
+        let dk =
+            ml_kem_1024::DecapsKey::try_from_bytes(arr).map_err(|_| "Invalid decapsulation key")?;
         Ok(Self(dk))
     }
 
@@ -102,10 +106,8 @@ impl MlKemCiphertext {
         if bytes.len() != CIPHERTEXT_SIZE {
             return Err("Invalid ciphertext size");
         }
-        let arr: [u8; CIPHERTEXT_SIZE] = bytes.try_into()
-            .map_err(|_| "Invalid ciphertext size")?;
-        let ct = ml_kem_1024::CipherText::try_from_bytes(arr)
-            .map_err(|_| "Invalid ciphertext")?;
+        let arr: [u8; CIPHERTEXT_SIZE] = bytes.try_into().map_err(|_| "Invalid ciphertext size")?;
+        let ct = ml_kem_1024::CipherText::try_from_bytes(arr).map_err(|_| "Invalid ciphertext")?;
         Ok(Self(ct))
     }
 
@@ -130,14 +132,24 @@ pub fn generate() -> Result<(MlKemEncapsulationKey, MlKemDecapsulationKey), Vaul
 
 /// Encapsulate a shared secret for the given encapsulation key
 /// Returns (shared_secret, ciphertext)
-pub fn encapsulate(ek: &MlKemEncapsulationKey) -> Result<(MlKemSharedSecret, MlKemCiphertext), VaultError> {
+pub fn encapsulate(
+    ek: &MlKemEncapsulationKey,
+) -> Result<(MlKemSharedSecret, MlKemCiphertext), VaultError> {
     let (ssk_bytes, ct) = ek.0.try_encaps().map_err(|_| VaultError::CryptoError)?;
-    Ok((MlKemSharedSecret(ssk_bytes.into_bytes()), MlKemCiphertext(ct)))
+    Ok((
+        MlKemSharedSecret(ssk_bytes.into_bytes()),
+        MlKemCiphertext(ct),
+    ))
 }
 
 /// Decapsulate a ciphertext using the decapsulation key
-pub fn decapsulate(ct: &MlKemCiphertext, dk: &MlKemDecapsulationKey) -> Result<MlKemSharedSecret, VaultError> {
-    let ssk_bytes = dk.0.try_decaps(&ct.0).map_err(|_| VaultError::CryptoError)?;
+pub fn decapsulate(
+    ct: &MlKemCiphertext,
+    dk: &MlKemDecapsulationKey,
+) -> Result<MlKemSharedSecret, VaultError> {
+    let ssk_bytes =
+        dk.0.try_decaps(&ct.0)
+            .map_err(|_| VaultError::CryptoError)?;
     Ok(MlKemSharedSecret(ssk_bytes.into_bytes()))
 }
 
@@ -163,7 +175,8 @@ mod tests {
         // (ML-KEM implicit rejection returns a pseudo-random value, not an error)
         let ss_wrong = decapsulate(&ct, &dk2).unwrap();
         assert_ne!(
-            ss_sender.as_bytes(), ss_wrong.as_bytes(),
+            ss_sender.as_bytes(),
+            ss_wrong.as_bytes(),
             "Wrong DK must produce different shared secret"
         );
     }
@@ -189,12 +202,12 @@ mod tests {
     #[test]
     fn test_key_serialization() {
         let (ek, dk) = generate().unwrap();
-        
+
         // Round-trip encapsulation key
         let ek_bytes = ek.as_bytes();
         let ek2 = MlKemEncapsulationKey::from_bytes(&ek_bytes).unwrap();
         assert_eq!(ek.as_bytes(), ek2.as_bytes());
-        
+
         // Round-trip decapsulation key
         let dk_bytes = dk.as_bytes();
         let dk2 = MlKemDecapsulationKey::from_bytes(&dk_bytes).unwrap();
@@ -205,11 +218,11 @@ mod tests {
     fn test_ciphertext_serialization() {
         let (ek, dk) = generate().unwrap();
         let (_, ct) = encapsulate(&ek).unwrap();
-        
+
         // Round-trip ciphertext
         let ct_bytes = ct.as_bytes();
         let ct2 = MlKemCiphertext::from_bytes(&ct_bytes).unwrap();
-        
+
         // Decapsulate with deserialized ciphertext should work
         let ss = decapsulate(&ct2, &dk).unwrap();
         assert_eq!(ss.as_bytes().len(), SHARED_SECRET_SIZE);
@@ -243,4 +256,3 @@ mod tests {
         assert_eq!(ss2.as_bytes().len(), 32);
     }
 }
-

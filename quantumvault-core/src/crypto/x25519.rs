@@ -1,5 +1,5 @@
 use rand::rngs::OsRng;
-use x25519_dalek::{StaticSecret, PublicKey, SharedSecret};
+use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
 
 use crate::errors::VaultError;
 
