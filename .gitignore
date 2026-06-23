@@ -6,8 +6,8 @@ target_random_build/
 
 # Test outputs and keys (CRITICAL: Do not upload test keys to GitHub)
 /test_output/
+/test_output_v5_backup/
 /keys/
-
 
 # IDE and editor settings
 .idea/

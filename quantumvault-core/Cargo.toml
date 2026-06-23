@@ -10,7 +10,7 @@ anyhow = "1.0"
 thiserror = "2.0"
 
 # Classical crypto (X25519 for hybrid security)
-x25519-dalek = { version = "2", features = ["static_secrets"] }
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 rand = "0.8"
 
 # Key Derivation

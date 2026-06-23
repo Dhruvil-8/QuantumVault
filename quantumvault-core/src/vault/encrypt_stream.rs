@@ -36,8 +36,8 @@ impl Drop for ZeroizeBuffer {
 pub fn encrypt_stream<R: Read, W: Write>(
     mut reader: R,
     mut writer: W,
-    master_key: &[u8; 32],
-    nonce_seed: &[u8; 32],
+    master_key: &[u8; 64],
+    nonce_seed: &[u8; 64],
 ) -> Result<(), VaultError> {
     let mut buffer_guard = ZeroizeBuffer(vec![0u8; CHUNK_SIZE]);
     let buffer = &mut buffer_guard.0;
@@ -96,8 +96,8 @@ pub fn encrypt_stream<R: Read, W: Write>(
 
 fn write_encrypted_payload<W: Write>(
     writer: &mut W,
-    master_key: &[u8; 32],
-    nonce_seed: &[u8; 32],
+    master_key: &[u8; 64],
+    nonce_seed: &[u8; 64],
     chunk_index: u64,
     payload: &mut Vec<u8>,
 ) -> Result<(), VaultError> {
@@ -115,14 +115,14 @@ fn write_encrypted_payload<W: Write>(
     Ok(())
 }
 
-fn derive_nonce(nonce_seed: &[u8; 32], index: u64) -> Result<[u8; NONCE_SIZE], VaultError> {
+fn derive_nonce(nonce_seed: &[u8; 64], index: u64) -> Result<[u8; NONCE_SIZE], VaultError> {
     use hkdf::Hkdf;
-    use sha3::Sha3_256;
+    use sha3::Sha3_512;
 
     let info = index.to_be_bytes();
     // Use proper HKDF extract+expand (RFC 5869) rather than from_prk(),
     // which expects input that has already been through the extract step.
-    let hk = Hkdf::<Sha3_256>::new(None, nonce_seed);
+    let hk = Hkdf::<Sha3_512>::new(None, nonce_seed);
     let mut nonce = [0u8; NONCE_SIZE];
     hk.expand(&info, &mut nonce)
         .map_err(|_| VaultError::CryptoError)?;
@@ -130,16 +130,16 @@ fn derive_nonce(nonce_seed: &[u8; 32], index: u64) -> Result<[u8; NONCE_SIZE], V
 }
 
 fn encrypt_chunk(
-    key: &[u8; 32],
+    key: &[u8; 64],
     nonce: &[u8; NONCE_SIZE],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, VaultError> {
     use chacha20poly1305::{
-        aead::{Aead, KeyInit},
         ChaCha20Poly1305, Key, Nonce,
+        aead::{Aead, KeyInit},
     };
 
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key[..32]));
     let ciphertext = cipher
         .encrypt(Nonce::from_slice(nonce), plaintext)
         .map_err(|_| VaultError::EncryptionFailed)?;

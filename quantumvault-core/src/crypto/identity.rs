@@ -188,10 +188,7 @@ fn write_private_file(path: impl AsRef<Path>, data: &[u8]) -> Result<(), VaultEr
         // This eliminates the TOCTOU race where the key is world-readable
         // between File::create and icacls.
         let parent = path.as_ref().parent().unwrap_or_else(|| Path::new("."));
-        let temp_name = format!(
-            ".qv_priv_{}.tmp",
-            rand::rngs::OsRng.next_u64()
-        );
+        let temp_name = format!(".qv_priv_{}.tmp", rand::rngs::OsRng.next_u64());
         let temp_path = parent.join(&temp_name);
 
         // Write key material to temp file

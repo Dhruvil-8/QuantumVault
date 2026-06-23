@@ -14,18 +14,18 @@ use crate::crypto::{
     identity::Identity,
     kdf,
     ml_dsa::{self, MlDsaPublicKey, MlDsaSignature, SIGNATURE_SIZE},
-    ml_kem::{self, MlKemCiphertext, MlKemEncapsulationKey, CIPHERTEXT_SIZE},
+    ml_kem::{self, CIPHERTEXT_SIZE, MlKemCiphertext, MlKemEncapsulationKey},
     public::{RecipientPublic, SenderPublic},
 };
 use crate::errors::VaultError;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 
 /// Magic bytes identifying a QuantumVault file
 pub const QVLT_MAGIC: &[u8; 4] = b"QVLT";
 
 /// Current vault format version
-pub const VAULT_VERSION: u16 = 5; // v5: fixed HKDF nonce derivation (proper extract+expand)
+pub const VAULT_VERSION: u16 = 6; // v6: maximum paranoia (64-byte KDF salt/nonces, ML-DSA-87)
 
 /// Vault header structure
 pub struct VaultHeader {
@@ -34,8 +34,8 @@ pub struct VaultHeader {
     pub eph_x25519_pub: [u8; 32],
     pub ml_kem_ciphertext: Vec<u8>,
     pub signature: Vec<u8>,
-    pub salt: [u8; 32],
-    pub nonce_seed: [u8; 32],
+    pub salt: [u8; 64],
+    pub nonce_seed: [u8; 64],
 }
 
 impl VaultHeader {
@@ -45,7 +45,7 @@ impl VaultHeader {
     pub fn create(
         sender: &Identity,
         recipient: &RecipientPublic,
-    ) -> Result<(Self, [u8; 32]), VaultError> {
+    ) -> Result<(Self, [u8; 64]), VaultError> {
         // Generate ephemeral X25519 keypair
         let eph_secret = x25519_dalek::EphemeralSecret::random_from_rng(OsRng);
         let eph_pub = x25519_dalek::PublicKey::from(&eph_secret);
@@ -62,7 +62,7 @@ impl VaultHeader {
         let (ml_kem_shared, ct) = ml_kem::encapsulate(&recip_ml_kem)?;
 
         // Generate random salt for HKDF
-        let mut salt = [0u8; 32];
+        let mut salt = [0u8; 64];
         OsRng.fill_bytes(&mut salt);
 
         // Derive hybrid master key with salt
@@ -70,7 +70,7 @@ impl VaultHeader {
             kdf::derive_master_key(x_shared.as_bytes(), ml_kem_shared.as_bytes(), &salt);
 
         // Generate nonce seed
-        let mut nonce_seed = [0u8; 32];
+        let mut nonce_seed = [0u8; 64];
         OsRng.fill_bytes(&mut nonce_seed);
 
         // Create unsigned header data for signing
@@ -125,7 +125,7 @@ impl VaultHeader {
         mut r: R,
         recipient: &Identity,
         sender: &SenderPublic,
-    ) -> Result<(Self, [u8; 32]), VaultError> {
+    ) -> Result<(Self, [u8; 64]), VaultError> {
         // Read and verify magic
         let mut magic = [0u8; 4];
         r.read_exact(&mut magic)?;
@@ -165,11 +165,11 @@ impl VaultHeader {
         r.read_exact(&mut sig)?;
 
         // Read salt
-        let mut salt = [0u8; 32];
+        let mut salt = [0u8; 64];
         r.read_exact(&mut salt)?;
 
         // Read nonce seed
-        let mut nonce_seed = [0u8; 32];
+        let mut nonce_seed = [0u8; 64];
         r.read_exact(&mut nonce_seed)?;
 
         // Reconstruct signed data and verify signature
@@ -219,8 +219,8 @@ fn write_prefix<W: Write>(
     flags: u16,
     eph: &[u8; 32],
     ct: &[u8],
-    salt: &[u8; 32],
-    nonce: &[u8; 32],
+    salt: &[u8; 64],
+    nonce: &[u8; 64],
 ) -> Result<(), VaultError> {
     w.write_all(QVLT_MAGIC)?;
     w.write_all(&VAULT_VERSION.to_be_bytes())?;

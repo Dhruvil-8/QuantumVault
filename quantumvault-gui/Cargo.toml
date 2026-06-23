@@ -1,0 +1,13 @@
+[package]
+name = "quantumvault-gui"
+version = "2.0.0"
+edition = "2024"
+description = "Native GPU-rendered GUI for QuantumVault"
+license = "MIT"
+
+[dependencies]
+quantumvault-core = { path = "../quantumvault-core" }
+eframe = "0.29"
+rfd = "0.15"
+anyhow = "1.0"
+hex = "0.4"

@@ -1,26 +1,26 @@
-//! ML-DSA-65 Module (NIST FIPS 204)
+//! ML-DSA-85 Module (NIST FIPS 204)
 //!
 //! This module provides quantum-resistant digital signatures using the
 //! Module-Lattice-Based Digital Signature Algorithm standardized by NIST.
 
-use fips204::ml_dsa_65;
+use fips204::ml_dsa_87;
 use fips204::traits::{SerDes, Signer, Verifier};
 
 use crate::errors::VaultError;
 
-/// Size constants for ML-DSA-65
-pub const PUBLIC_KEY_SIZE: usize = 1952;
-pub const PRIVATE_KEY_SIZE: usize = 4032;
-pub const SIGNATURE_SIZE: usize = 3309;
+/// Size constants for ML-DSA-85
+pub const PUBLIC_KEY_SIZE: usize = 2592;
+pub const PRIVATE_KEY_SIZE: usize = 4896;
+pub const SIGNATURE_SIZE: usize = 4627;
 
-/// ML-DSA-65 Public Key (for verification)
+/// ML-DSA-85 Public Key (for verification)
 #[derive(Clone)]
-pub struct MlDsaPublicKey(pub(crate) ml_dsa_65::PublicKey);
+pub struct MlDsaPublicKey(pub(crate) ml_dsa_87::PublicKey);
 
-/// ML-DSA-65 Private Key (for signing)
-pub struct MlDsaPrivateKey(pub(crate) ml_dsa_65::PrivateKey);
+/// ML-DSA-85 Private Key (for signing)
+pub struct MlDsaPrivateKey(pub(crate) ml_dsa_87::PrivateKey);
 
-/// ML-DSA-65 Signature
+/// ML-DSA-85 Signature
 #[derive(Clone)]
 pub struct MlDsaSignature(pub(crate) [u8; SIGNATURE_SIZE]);
 
@@ -34,7 +34,7 @@ impl Drop for MlDsaPrivateKey {
             std::ptr::write_bytes(
                 &mut self.0 as *mut _ as *mut u8,
                 0,
-                std::mem::size_of::<ml_dsa_65::PrivateKey>(),
+                std::mem::size_of::<ml_dsa_87::PrivateKey>(),
             );
         }
         // Prevent the compiler from eliding the zero-write as a dead store.
@@ -49,7 +49,7 @@ impl MlDsaPublicKey {
             return Err("Invalid public key size");
         }
         let arr: [u8; PUBLIC_KEY_SIZE] = bytes.try_into().map_err(|_| "Invalid public key size")?;
-        let pk = ml_dsa_65::PublicKey::try_from_bytes(arr).map_err(|_| "Invalid public key")?;
+        let pk = ml_dsa_87::PublicKey::try_from_bytes(arr).map_err(|_| "Invalid public key")?;
         Ok(Self(pk))
     }
 
@@ -67,7 +67,7 @@ impl MlDsaPrivateKey {
         }
         let arr: [u8; PRIVATE_KEY_SIZE] =
             bytes.try_into().map_err(|_| "Invalid private key size")?;
-        let sk = ml_dsa_65::PrivateKey::try_from_bytes(arr).map_err(|_| "Invalid private key")?;
+        let sk = ml_dsa_87::PrivateKey::try_from_bytes(arr).map_err(|_| "Invalid private key")?;
         Ok(Self(sk))
     }
 
@@ -93,9 +93,9 @@ impl MlDsaSignature {
     }
 }
 
-/// Generate a new ML-DSA-65 keypair
+/// Generate a new ML-DSA-85 keypair
 pub fn generate() -> Result<(MlDsaPublicKey, MlDsaPrivateKey), VaultError> {
-    let (pk, sk) = ml_dsa_65::try_keygen().map_err(|_| VaultError::KeygenFailed)?;
+    let (pk, sk) = ml_dsa_87::try_keygen().map_err(|_| VaultError::KeygenFailed)?;
     Ok((MlDsaPublicKey(pk), MlDsaPrivateKey(sk)))
 }
 
@@ -230,7 +230,7 @@ mod tests {
         assert!(verify(message, &sig1, &pk));
         assert!(verify(message, &sig2, &pk));
 
-        // ML-DSA-65 uses randomized signing, so signatures should differ
+        // ML-DSA-85 uses randomized signing, so signatures should differ
         // (This is a security property — deterministic sigs can leak key material)
         assert_ne!(sig1.as_bytes(), sig2.as_bytes());
     }

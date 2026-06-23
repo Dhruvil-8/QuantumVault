@@ -23,8 +23,8 @@ const MAX_CHUNK_COUNT: u64 = u32::MAX as u64;
 pub fn decrypt_stream<R: Read, W: Write>(
     mut reader: R,
     mut writer: W,
-    master_key: &[u8; 32],
-    nonce_seed: &[u8; 32],
+    master_key: &[u8; 64],
+    nonce_seed: &[u8; 64],
 ) -> Result<(), VaultError> {
     let mut chunk_index: u64 = 0;
 
@@ -120,14 +120,14 @@ pub fn decrypt_stream<R: Read, W: Write>(
 
 /* ---------------- internal helpers ---------------- */
 
-fn derive_nonce(nonce_seed: &[u8; 32], index: u64) -> Result<[u8; NONCE_SIZE], VaultError> {
+fn derive_nonce(nonce_seed: &[u8; 64], index: u64) -> Result<[u8; NONCE_SIZE], VaultError> {
     use hkdf::Hkdf;
-    use sha3::Sha3_256;
+    use sha3::Sha3_512;
 
     let info = index.to_be_bytes();
     // Use proper HKDF extract+expand (RFC 5869) rather than from_prk(),
     // which expects input that has already been through the extract step.
-    let hk = Hkdf::<Sha3_256>::new(None, nonce_seed);
+    let hk = Hkdf::<Sha3_512>::new(None, nonce_seed);
     let mut nonce = [0u8; NONCE_SIZE];
     hk.expand(&info, &mut nonce)
         .map_err(|_| VaultError::CryptoError)?;
@@ -135,16 +135,16 @@ fn derive_nonce(nonce_seed: &[u8; 32], index: u64) -> Result<[u8; NONCE_SIZE], V
 }
 
 fn decrypt_chunk(
-    key: &[u8; 32],
+    key: &[u8; 64],
     nonce: &[u8; NONCE_SIZE],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, VaultError> {
     use chacha20poly1305::{
-        aead::{Aead, KeyInit},
         ChaCha20Poly1305, Key, Nonce,
+        aead::{Aead, KeyInit},
     };
 
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key[..32]));
     let plaintext = cipher
         .decrypt(Nonce::from_slice(nonce), ciphertext)
         .map_err(|_| VaultError::DecryptionFailed)?;

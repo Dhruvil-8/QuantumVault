@@ -3,5 +3,5 @@ resolver = "2"
 members = [
     "quantumvault-core",
     "quantumvault-cli",
-    "src-tauri"
+    "quantumvault-gui"
 ]

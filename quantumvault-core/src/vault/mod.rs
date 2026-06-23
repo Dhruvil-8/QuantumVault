@@ -8,7 +8,7 @@ use std::io::{BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use crate::errors::VaultError;
-use rand::{rngs::OsRng, RngCore};
+use rand::{RngCore, rngs::OsRng};
 
 mod decrypt_stream;
 mod encrypt_stream;
@@ -16,7 +16,7 @@ mod header;
 
 pub use decrypt_stream::decrypt_stream;
 pub use encrypt_stream::encrypt_stream;
-pub use header::{VaultHeader, QVLT_MAGIC, VAULT_VERSION};
+pub use header::{QVLT_MAGIC, VAULT_VERSION, VaultHeader};
 
 use crate::crypto::identity::Identity;
 use crate::crypto::public::{RecipientPublic, SenderPublic};
