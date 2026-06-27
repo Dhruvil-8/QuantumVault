@@ -82,6 +82,24 @@ impl QuantumVaultApp {
             Ok(identity) => match identity.export_secret() {
                 Ok(secret_bytes) => match std::fs::write(Path::new(&self.identity_path), &secret_bytes) {
                     Ok(_) => {
+                        // Automatically export public key file next to it
+                        let parent = Path::new(&self.identity_path).parent().unwrap_or_else(|| Path::new(""));
+                        let stem = Path::new(&self.identity_path).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "identity".to_string());
+                        
+                        let pub_filename = if stem.ends_with("_secret") {
+                            format!("{}_public.qvk", &stem[..stem.len() - 7])
+                        } else {
+                            format!("{}_public.qvk", stem)
+                        };
+                        let pub_path = parent.join(pub_filename);
+                        
+                        let mut auto_save_msg = String::new();
+                        if let Ok(pub_bytes) = identity.export_public() {
+                            if std::fs::write(&pub_path, &pub_bytes).is_ok() {
+                                auto_save_msg = format!(" (public key automatically saved next to it as: {})", pub_path.file_name().unwrap_or_default().to_string_lossy());
+                            }
+                        }
+
                         let pub_b64 = identity.export_public_b64().unwrap_or_default();
                         self.identity_info = Some(format!(
                             "Label: {}\nComment: {}\n\nShareable Public Key (Base64):\n{}",
@@ -90,7 +108,7 @@ impl QuantumVaultApp {
                             pub_b64
                         ));
                         self.identity_status =
-                            Some(Ok("Identity successfully generated and saved!".to_string()));
+                            Some(Ok(format!("Identity successfully generated and saved!{}", auto_save_msg)));
                     }
                     Err(e) => {
                         self.identity_status = Some(Err(format!("Failed to save secret key file: {}", e)));
@@ -102,6 +120,55 @@ impl QuantumVaultApp {
             },
             Err(e) => {
                 self.identity_status = Some(Err(format!("Key generation failed: {}", e)));
+            }
+        }
+    }
+
+    fn export_public_key_file(&mut self) {
+        if self.identity_path.is_empty() {
+            self.identity_status = Some(Err("No identity file loaded to export.".to_string()));
+            return;
+        }
+
+        match std::fs::read(Path::new(&self.identity_path)) {
+            Ok(bytes) => match PQIdentity::from_secret_bytes(&bytes) {
+                Ok(identity) => {
+                    let default_name = Path::new(&self.identity_path)
+                        .file_stem()
+                        .map(|s| format!("{}_public.qvk", s.to_string_lossy()))
+                        .unwrap_or_else(|| "public.qvk".to_string());
+
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_file_name(&default_name)
+                        .add_filter("QuantumVault Key", &["qvk"])
+                        .save_file()
+                    {
+                        let mut path_str = path.display().to_string();
+                        if !path_str.ends_with(".qvk") {
+                            path_str.push_str(".qvk");
+                        }
+
+                        match identity.export_public() {
+                            Ok(pub_bytes) => match std::fs::write(Path::new(&path_str), &pub_bytes) {
+                                Ok(_) => {
+                                    self.identity_status = Some(Ok(format!("Public key successfully saved to: {}", path_str)));
+                                }
+                                Err(e) => {
+                                    self.identity_status = Some(Err(format!("Failed to write public key file: {}", e)));
+                                }
+                            },
+                            Err(e) => {
+                                self.identity_status = Some(Err(format!("Failed to export public key: {}", e)));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.identity_status = Some(Err(format!("Failed to parse secret key: {}", e)));
+                }
+            },
+            Err(e) => {
+                self.identity_status = Some(Err(format!("Failed to read secret key file: {}", e)));
             }
         }
     }
@@ -350,6 +417,9 @@ impl eframe::App for QuantumVaultApp {
                         }
                         if ui.button("Load Key").clicked() {
                             self.load_identity();
+                        }
+                        if ui.button("Export Public Key File").clicked() {
+                            self.export_public_key_file();
                         }
                     });
 
