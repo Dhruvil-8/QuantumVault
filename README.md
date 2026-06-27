@@ -1,102 +1,116 @@
-# QuantumVault
+# QuantumVault PQC SDK
 
-QuantumVault is a post-quantum secure file encryption locker and key manager. It implements the latest NIST standards alongside classical primitives in a **hybrid cryptographic model** to guarantee security against both quantum and classical adversaries.
+> [!WARNING]
+> **DISCLAIMER:** This repository is an AI-generated codebase. A professional third-party cryptographic, memory safety, or security audit has **not** been performed. While unit and integration test suites run successfully, this codebase has not undergone a formal security audit. Do not use this software in production systems or high-risk environments securing critical assets. Use it at your own risk.
 
-This repository features:
-1. **`quantumvault-core`:** A pure Rust library implementing the cryptographic core.
-2. **`quantumvault-cli`:** A lightweight, dependency-free command-line interface.
-3. **`quantumvault-gui`:** A high-performance, native GPU-rendered desktop application built using `eframe` and `egui` (replacing the old Tauri/HTML stack with a 100% Rust solution).
-
----
-
-## Cryptographic Architecture (Max Paranoia - Version 6)
-
-QuantumVault uses a **hybrid key encapsulation** approach:
-* **Classical Layer:** X25519 ECDH (RFC 7748) provides audited classical security, hardened with the `zeroize` feature.
-* **Post-Quantum Layer:** ML-KEM-1024 (FIPS 203) provides maximum-strength quantum-resistant key exchange (NIST Category 5).
-* **Signatures (Authenticity):** ML-DSA-87 (FIPS 204) signs the vault header, ensuring that files cannot be tampered with or replaced (NIST Category 5).
-* **Symmetric Encryption:** File content is encrypted in 8 MiB chunks using **ChaCha20-Poly1305** authenticated encryption.
-* **Key Derivation (KDF):** Secrets are combined using **HKDF-SHA3-512** with 64-byte outputs.
-* **Hardened Metadata**: Uses **64-byte** (512-bit) random salts and nonce seeds to maximize cryptographic entropy.
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                 QuantumVault File (.qvault)                 │
-├─────────────────────────────────────────────────────────────┤
-│  Header                                                     │
-│  ├─ Magic: "QVLT"                                           │
-│  ├─ Version: 6                                              │
-│  ├─ Ephemeral X25519 Public Key (32 bytes)                 │
-│  ├─ ML-KEM Ciphertext (1568 bytes)                          │
-│  ├─ ML-DSA Signature (4627 bytes)                           │
-│  ├─ Salt (64 bytes)                                         │
-│  └─ Nonce Seed (64 bytes)                                   │
-├─────────────────────────────────────────────────────────────┤
-│  Encrypted Payload (ChaCha20-Poly1305, chunked)             │
-└─────────────────────────────────────────────────────────────┘
-```
+QuantumVault is a hybrid post-quantum secure file encryption locker and multi-language software development kit (SDK). It integrates modern NIST standards alongside classical primitives in a **hybrid cryptographic configuration** to defend files against both contemporary eavesdropping and future quantum-computing decryption attacks (such as "Harvest Now, Decrypt Later").
 
 ---
 
 ## Workspace Structure
 
-The project is structured as a Cargo workspace:
-* `/quantumvault-core`: The cryptographic core library containing KEM, DSA, KDF, and file chunk streams.
-* `/quantumvault-cli`: The CLI utility for keygen, encryption, and decryption.
-* `/quantumvault-gui`: The native GPU-rendered desktop application.
+The project is configured as a single Cargo workspace containing:
+1. **`quantumvault-core`**: The pure-Rust cryptographic core implementing ML-KEM-1024 (`fips203`), ML-DSA-87 (`fips204`), X25519, and ChaCha20-Poly1305.
+2. **`quantumvault-cli`**: Lightweight command-line client matching the SDK operations.
+3. **`quantumvault-gui`**: Native GPU-rendered desktop client built with `egui` and `eframe`.
+4. **`quantumvault-python`**: Python bindings managed via Maturin/PyO3.
+5. **`quantumvault-wasm`**: WebAssembly bindings for browser-based operations.
+6. **`quantumvault-ffi`**: C-compatible FFI library with automated `quantumvault.h` header generation.
 
 ---
 
-## Getting Started
+## Cryptographic Specification
 
-### Prerequisites
-
-* Rust (latest stable toolchain, aligned on **Rust Edition 2024**).
+- **Classical Layer**: X25519 Elliptic Curve Diffie-Hellman (ECDH) for audited classical strength.
+- **Post-Quantum KEM**: ML-KEM-1024 (FIPS 203, NIST Category 5).
+- **Post-Quantum Signatures**: ML-DSA-87 (FIPS 204, NIST Category 5) applied to pre-hashed SHA3-256 digests.
+- **Key Derivation (KDF)**: HKDF-SHA3-512 combining classical and PQ secrets.
+- **Symmetric Encryption**: ChaCha20-Poly1305 authenticated encryption.
+- **Key Storage (`.qvk`)**: Binary serialized files containing key type tags, JSON-based user metadata, payload data, and BLAKE3 checksums.
+- **Envelope Container (`.qvf`)**: Packed payload wrapping KEM ciphertext, detached signature, and AEAD encrypted data.
 
 ---
 
-### Running the CLI Client
+## Getting Started & CLI Usage
 
-You can build and run the CLI directly:
-
-#### 1. Generate cryptographic keys (Identity)
-Generates keypairs for X25519, ML-KEM-1024, and ML-DSA-87:
+### Build and Test
+Run compilation and validation checks:
 ```bash
-cargo run -p quantumvault-cli -- keygen ./keys/alice
-cargo run -p quantumvault-cli -- keygen ./keys/bob
+# Compile check all targets
+$env:PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1; cargo check --all
+
+# Run workspace tests
+$env:PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1; cargo test --all
 ```
 
-#### 2. Encrypt a file
-Encrypt a file for a recipient (Bob) using your identity (Alice). If the output path lacks the `.qvault` extension, it will be automatically appended:
+### CLI Client Commands
+Build the CLI binary:
 ```bash
-cargo run -p quantumvault-cli -- encrypt -i document.pdf -o document.pdf.qvault -s ./keys/alice -r ./keys/bob/encryption
+cargo build --release -p quantumvault-cli
 ```
 
-#### 3. Decrypt a file
-Decrypt a file using your identity (Bob) and verifying the sender's public key (Alice):
-```bash
-cargo run -p quantumvault-cli -- decrypt -i document.pdf.qvault -o document_decrypted.pdf -r ./keys/bob -s ./keys/alice/signing
-```
+1. **Generate Identity** (Creates a `.qvk` secret key file):
+   ```bash
+   quantumvault-cli keygen alice_secret.qvk --label "Alice Key" --comment "Alice PQC Identity"
+   ```
+
+2. **Export Public Key**:
+   ```bash
+   quantumvault-cli export-public -s alice_secret.qvk -o alice_public.qvk
+   ```
+
+3. **Encrypt File** (Encapsulates key for recipient and signs payload):
+   ```bash
+   quantumvault-cli encrypt -i plaintext.txt -o ciphertext.qvf -s alice_secret.qvk -r bob_public.qvk
+   ```
+
+4. **Decrypt File** (Decrypts ciphertext and verifies sender's signature):
+   ```bash
+   quantumvault-cli decrypt -i ciphertext.qvf -o decrypted.txt -r bob_secret.qvk -s alice_public.qvk
+   ```
 
 ---
 
-### Running the Desktop GUI Client
+## Multi-Language Integrations
 
-You can run the GUI directly:
-```bash
-cargo run -p quantumvault-gui --release
+### Python SDK (`quantumvault-python`)
+Install using Maturin and run in Python:
+```python
+from quantumvault import Identity, PublicKey, encrypt, decrypt
+
+# Generate identities
+alice = Identity(label="Alice")
+bob = Identity(label="Bob")
+
+# Encrypt & Sign
+ciphertext = encrypt(b"Confidential payload", bob.public_key, sender=alice)
+
+# Decrypt & Verify
+plaintext = decrypt(ciphertext, bob, sender_public=alice.public_key)
+print(plaintext.decode())  # "Confidential payload"
 ```
 
----
+### WebAssembly (`quantumvault-wasm`)
+Import the generated WASM package in JS/TS:
+```javascript
+import { Identity, PublicKey, encrypt, decrypt_verified } from "./pkg/quantumvault_wasm.js";
 
-## Cryptographic Disclaimer
+const alice = new Identity();
+const bob = new Identity();
 
-> [!WARNING]
-> This software is experimental and is an AI-generated codebase. It implements the finalized NIST FIPS 203 (ML-KEM-1024) and FIPS 204 (ML-DSA-87) standards, but the code has **not** undergone a professional third-party cryptographic or security audit.
-> Do not use this software for high-risk data storage or production environments securing critical assets. Use it at your own risk.
+const ciphertext = encrypt(new TextEncoder().encode("Hello WASM"), bob.public_key());
+const decrypted = decrypt_verified(ciphertext, bob, alice.public_key());
+```
 
----
+### C FFI (`quantumvault-ffi`)
+Include the generated header:
+```c
+#include "quantumvault.h"
 
-## License
+// Generate Alice identity handle
+struct QVIdentityHandle* alice = qv_identity_generate();
 
-This project is licensed under the MIT License.
+// Clean up handle
+qv_identity_free(alice);
+```
+Header location: [quantumvault-ffi/quantumvault.h](file:///c:/Users/admin/Downloads/QuantumVaultRust/quantumvault-ffi/quantumvault.h)

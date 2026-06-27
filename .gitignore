@@ -4,10 +4,35 @@ target_tmp/
 target_random_build/
 **/*.rs.bk
 
+# WebAssembly (WASM) build artifacts
+/quantumvault-wasm/pkg/
+/quantumvault-wasm/target/
+.wasm-pack/
+
+# Python build and virtual environment artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+.poetry/
+
+# FFI Generated Header (generated on build)
+/quantumvault-ffi/quantumvault.h
+
 # Test outputs and keys (CRITICAL: Do not upload test keys to GitHub)
 /test_output/
 /test_output_v5_backup/
 /keys/
+*.qvk
+*.qvf
 
 # IDE and editor settings
 .idea/

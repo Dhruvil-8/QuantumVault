@@ -6,7 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use eframe::egui;
-use quantumvault_core::{Identity, RecipientPublic, SenderPublic, decrypt_file, encrypt_file};
+use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta};
 use std::path::Path;
 
 #[derive(Default, PartialEq)]
@@ -24,6 +24,8 @@ struct QuantumVaultApp {
     identity_path: String,
     identity_info: Option<String>,
     identity_status: Option<Result<String, String>>,
+    identity_label: String,
+    identity_comment: String,
 
     // Encryption View State
     enc_source: String,
@@ -47,6 +49,8 @@ impl Default for QuantumVaultApp {
             identity_path: String::new(),
             identity_info: None,
             identity_status: None,
+            identity_label: String::new(),
+            identity_comment: String::new(),
             enc_source: String::new(),
             enc_output: String::new(),
             enc_sender: String::new(),
@@ -64,25 +68,36 @@ impl Default for QuantumVaultApp {
 impl QuantumVaultApp {
     fn generate_identity(&mut self) {
         if self.identity_path.is_empty() {
-            self.identity_status = Some(Err("Please select a target directory first.".to_string()));
+            self.identity_status = Some(Err("Please select a target file first.".to_string()));
             return;
         }
 
-        let path = Path::new(&self.identity_path);
-        match Identity::generate() {
-            Ok(identity) => match identity.save_to(path) {
-                Ok(_) => {
-                    self.identity_info = Some(format!(
-                        "X25519 Pub: {}\nML-KEM Key Size: {} bytes\nML-DSA Key Size: {} bytes",
-                        hex::encode(identity.x25519_public_bytes()),
-                        identity.ml_kem_ek_size(),
-                        identity.ml_dsa_pk_size()
-                    ));
-                    self.identity_status =
-                        Some(Ok("Identity successfully generated and saved!".to_string()));
-                }
+        let meta = KeyMeta {
+            label: Some(self.identity_label.trim().to_string()),
+            comment: Some(self.identity_comment.trim().to_string()),
+            expires_at: None,
+        };
+
+        match PQIdentity::generate_with_meta(meta) {
+            Ok(identity) => match identity.export_secret() {
+                Ok(secret_bytes) => match std::fs::write(Path::new(&self.identity_path), &secret_bytes) {
+                    Ok(_) => {
+                        let pub_b64 = identity.export_public_b64().unwrap_or_default();
+                        self.identity_info = Some(format!(
+                            "Label: {}\nComment: {}\n\nShareable Public Key (Base64):\n{}",
+                            identity.meta.label.as_deref().unwrap_or("None"),
+                            identity.meta.comment.as_deref().unwrap_or("None"),
+                            pub_b64
+                        ));
+                        self.identity_status =
+                            Some(Ok("Identity successfully generated and saved!".to_string()));
+                    }
+                    Err(e) => {
+                        self.identity_status = Some(Err(format!("Failed to save secret key file: {}", e)));
+                    }
+                },
                 Err(e) => {
-                    self.identity_status = Some(Err(format!("Failed to save keys: {}", e)));
+                    self.identity_status = Some(Err(format!("Key export failed: {}", e)));
                 }
             },
             Err(e) => {
@@ -94,33 +109,38 @@ impl QuantumVaultApp {
     fn load_identity(&mut self) {
         if self.identity_path.is_empty() {
             self.identity_status = Some(Err(
-                "Please select an identity directory to load.".to_string()
+                "Please select an identity file to load.".to_string()
             ));
             return;
         }
 
-        let path = Path::new(&self.identity_path);
-        match Identity::load(path) {
-            Ok(identity) => {
-                self.identity_info = Some(format!(
-                    "X25519 Pub: {}\nML-KEM Key Size: {} bytes\nML-DSA Key Size: {} bytes",
-                    hex::encode(identity.x25519_public_bytes()),
-                    identity.ml_kem_ek_size(),
-                    identity.ml_dsa_pk_size()
-                ));
-                self.identity_status = Some(Ok("Identity successfully loaded!".to_string()));
-            }
+        match std::fs::read(Path::new(&self.identity_path)) {
+            Ok(bytes) => match PQIdentity::from_secret_bytes(&bytes) {
+                Ok(identity) => {
+                    let pub_b64 = identity.export_public_b64().unwrap_or_default();
+                    self.identity_info = Some(format!(
+                        "Label: {}\nComment: {}\n\nShareable Public Key (Base64):\n{}",
+                        identity.meta.label.as_deref().unwrap_or("None"),
+                        identity.meta.comment.as_deref().unwrap_or("None"),
+                        pub_b64
+                    ));
+                    self.identity_status = Some(Ok("Identity successfully loaded!".to_string()));
+                }
+                Err(e) => {
+                    self.identity_status = Some(Err(format!("Failed to parse secret key: {}", e)));
+                    self.identity_info = None;
+                }
+            },
             Err(e) => {
-                self.identity_status = Some(Err(format!("Failed to load identity: {}", e)));
+                self.identity_status = Some(Err(format!("Failed to read file: {}", e)));
                 self.identity_info = None;
             }
         }
     }
 
     fn run_encryption(&mut self) {
-        // Enforce .qvault extension
-        if !self.enc_output.is_empty() && !self.enc_output.ends_with(".qvault") {
-            self.enc_output.push_str(".qvault");
+        if !self.enc_output.is_empty() && !self.enc_output.ends_with(".qvf") {
+            self.enc_output.push_str(".qvf");
         }
 
         if self.enc_source.is_empty()
@@ -132,35 +152,55 @@ impl QuantumVaultApp {
             return;
         }
 
-        let sender_path = Path::new(&self.enc_sender);
-        let recipient_path = Path::new(&self.enc_recipient);
-
-        let sender_identity = match Identity::load(sender_path) {
-            Ok(id) => id,
+        let plaintext = match std::fs::read(Path::new(&self.enc_source)) {
+            Ok(bytes) => bytes,
             Err(e) => {
-                self.enc_status = Some(Err(format!("Failed to load sender identity: {}", e)));
+                self.enc_status = Some(Err(format!("Failed to read source file: {}", e)));
                 return;
             }
         };
 
-        let recipient_pub = match RecipientPublic::load(recipient_path) {
-            Ok(pub_key) => pub_key,
+        let sender_identity = match std::fs::read(Path::new(&self.enc_sender))
+            .and_then(|bytes| PQIdentity::from_secret_bytes(&bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))
+        {
+            Ok(id) => id,
             Err(e) => {
-                self.enc_status = Some(Err(format!("Failed to load recipient public keys: {}", e)));
+                self.enc_status = Some(Err(format!("Failed to load sender identity key file: {}", e)));
                 return;
+            }
+        };
+
+        // Recipient can be a path to a key file or a Base64 string
+        let recipient_pub = if let Ok(bytes) = std::fs::read(Path::new(&self.enc_recipient)) {
+            match PQPublicKey::from_bytes(&bytes) {
+                Ok(pk) => pk,
+                Err(e) => {
+                    self.enc_status = Some(Err(format!("Failed to parse recipient public key from file: {}", e)));
+                    return;
+                }
+            }
+        } else {
+            match PQPublicKey::from_b64(&self.enc_recipient.trim()) {
+                Ok(pk) => pk,
+                Err(e) => {
+                    self.enc_status = Some(Err(format!("Recipient is neither a valid public key file nor valid Base64: {}", e)));
+                    return;
+                }
             }
         };
 
         self.enc_status = Some(Ok("Encrypting file... Please wait.".to_string()));
 
-        match encrypt_file(
-            Path::new(&self.enc_source),
-            Path::new(&self.enc_output),
-            &sender_identity,
-            &recipient_pub,
-        ) {
-            Ok(_) => {
-                self.enc_status = Some(Ok("✓ Encryption completed successfully!".to_string()));
+        match PQFile::encrypt_and_sign(&plaintext, &recipient_pub, &sender_identity) {
+            Ok(envelope) => {
+                match std::fs::write(Path::new(&self.enc_output), &envelope) {
+                    Ok(_) => {
+                        self.enc_status = Some(Ok("✓ Encryption completed successfully!".to_string()));
+                    }
+                    Err(e) => {
+                        self.enc_status = Some(Err(format!("Failed to write encrypted file: {}", e)));
+                    }
+                }
             }
             Err(e) => {
                 self.enc_status = Some(Err(format!("Encryption failed: {}", e)));
@@ -172,41 +212,69 @@ impl QuantumVaultApp {
         if self.dec_vault.is_empty()
             || self.dec_output.is_empty()
             || self.dec_recipient.is_empty()
-            || self.dec_sender_pub.is_empty()
         {
-            self.dec_status = Some(Err("All fields are required to decrypt.".to_string()));
+            self.dec_status = Some(Err("Vault file, output file, and recipient identity are required to decrypt.".to_string()));
             return;
         }
 
-        let recipient_path = Path::new(&self.dec_recipient);
-        let sender_pub_path = Path::new(&self.dec_sender_pub);
-
-        let recipient_identity = match Identity::load(recipient_path) {
-            Ok(id) => id,
+        let envelope = match std::fs::read(Path::new(&self.dec_vault)) {
+            Ok(bytes) => bytes,
             Err(e) => {
-                self.dec_status = Some(Err(format!("Failed to load recipient identity: {}", e)));
+                self.dec_status = Some(Err(format!("Failed to read vault file: {}", e)));
                 return;
             }
         };
 
-        let sender_pub = match SenderPublic::load(sender_pub_path) {
-            Ok(pub_key) => pub_key,
+        let recipient_identity = match std::fs::read(Path::new(&self.dec_recipient))
+            .and_then(|bytes| PQIdentity::from_secret_bytes(&bytes).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())))
+        {
+            Ok(id) => id,
             Err(e) => {
-                self.dec_status = Some(Err(format!("Failed to load sender public key: {}", e)));
+                self.dec_status = Some(Err(format!("Failed to load recipient identity key file: {}", e)));
                 return;
             }
+        };
+
+        let sender_pub = if self.dec_sender_pub.trim().is_empty() {
+            None
+        } else {
+            let pk = if let Ok(bytes) = std::fs::read(Path::new(&self.dec_sender_pub)) {
+                match PQPublicKey::from_bytes(&bytes) {
+                    Ok(pk) => Some(pk),
+                    Err(e) => {
+                        self.dec_status = Some(Err(format!("Failed to parse sender public key from file: {}", e)));
+                        return;
+                    }
+                }
+            } else {
+                match PQPublicKey::from_b64(&self.dec_sender_pub.trim()) {
+                    Ok(pk) => Some(pk),
+                    Err(e) => {
+                        self.dec_status = Some(Err(format!("Sender public key is neither a valid file nor valid Base64: {}", e)));
+                        return;
+                    }
+                }
+            };
+            pk
         };
 
         self.dec_status = Some(Ok("Decrypting file... Please wait.".to_string()));
 
-        match decrypt_file(
-            Path::new(&self.dec_vault),
-            Path::new(&self.dec_output),
-            &recipient_identity,
-            &sender_pub,
-        ) {
-            Ok(_) => {
-                self.dec_status = Some(Ok("✓ Decryption completed successfully!".to_string()));
+        match PQFile::decrypt_and_verify(&envelope, &recipient_identity, sender_pub.as_ref()) {
+            Ok(plaintext) => {
+                match std::fs::write(Path::new(&self.dec_output), &plaintext) {
+                    Ok(_) => {
+                        let success_msg = if sender_pub.is_some() {
+                            "✓ Decryption completed & signature verified successfully!"
+                        } else {
+                            "✓ Decryption completed successfully (signature check skipped)!"
+                        };
+                        self.dec_status = Some(Ok(success_msg.to_string()));
+                    }
+                    Err(e) => {
+                        self.dec_status = Some(Err(format!("Failed to write decrypted file: {}", e)));
+                    }
+                }
             }
             Err(e) => {
                 self.dec_status = Some(Err(format!("Decryption failed: {}", e)));
@@ -221,7 +289,7 @@ impl eframe::App for QuantumVaultApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(8.0);
                 ui.heading("QuantumVault");
-                ui.label("Post-Quantum Secure File Encryption");
+                ui.label("Post-Quantum Hybrid Secure File Envelope Manager");
                 ui.add_space(10.0);
             });
 
@@ -234,26 +302,53 @@ impl eframe::App for QuantumVaultApp {
                 .rounding(12.0)
                 .inner_margin(16.0)
                 .show(ui, |ui| {
-                    ui.strong("My Cryptographic Identity");
-                    ui.label("Manage your local ML-KEM-1024 & ML-DSA-87 keypairs.");
+                    ui.strong("Cryptographic Identity Manager");
+                    ui.label("Generate or load ML-KEM-1024 / ML-DSA-87 / X25519 identity keys (.qvk).");
                     ui.add_space(8.0);
 
+                    egui::Grid::new("identity_grid")
+                        .num_columns(3)
+                        .spacing([10.0, 10.0])
+                        .show(ui, |ui| {
+                            ui.label("Identity File (.qvk):");
+                            ui.text_edit_singleline(&mut self.identity_path);
+                            if ui.button("Browse").clicked() {
+                                if let Some(path) = rfd::FileDialog::new()
+                                    .add_filter("QuantumVault Key", &["qvk"])
+                                    .pick_file()
+                                {
+                                    self.identity_path = path.display().to_string();
+                                }
+                            }
+                            ui.end_row();
+
+                            ui.label("Metadata Label:");
+                            ui.text_edit_singleline(&mut self.identity_label);
+                            ui.label("(Optional label for new keys)");
+                            ui.end_row();
+
+                            ui.label("Metadata Comment:");
+                            ui.text_edit_singleline(&mut self.identity_comment);
+                            ui.label("(Optional comment for new keys)");
+                            ui.end_row();
+                        });
+
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        ui.label("Identity Directory:");
-                        ui.text_edit_singleline(&mut self.identity_path);
-                        if ui.button("Select").clicked() {
-                            if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                self.identity_path = path.display().to_string();
+                        if ui.button("Generate New Key").clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("QuantumVault Key", &["qvk"])
+                                .save_file()
+                            {
+                                let mut path_str = path.display().to_string();
+                                if !path_str.ends_with(".qvk") {
+                                    path_str.push_str(".qvk");
+                                }
+                                self.identity_path = path_str;
+                                self.generate_identity();
                             }
                         }
-                    });
-
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Generate New").clicked() {
-                            self.generate_identity();
-                        }
-                        if ui.button("Load Existing").clicked() {
+                        if ui.button("Load Key").clicked() {
                             self.load_identity();
                         }
                     });
@@ -298,7 +393,7 @@ impl eframe::App for QuantumVaultApp {
                 .inner_margin(16.0)
                 .show(ui, |ui| match self.active_tab {
                     Tab::Encrypt => {
-                        ui.strong("Create Encrypted Container (v6)");
+                        ui.strong("Create Encrypted Hybrid Envelope (.qvf)");
                         ui.add_space(8.0);
 
                         egui::Grid::new("encrypt_grid")
@@ -316,16 +411,16 @@ impl eframe::App for QuantumVaultApp {
                                 ui.end_row();
 
                                 // Output Vault
-                                ui.label("Output Vault (.qvault):");
+                                ui.label("Output Envelope (.qvf):");
                                 ui.text_edit_singleline(&mut self.enc_output);
                                 if ui.button("Save As").clicked() {
                                     if let Some(path) = rfd::FileDialog::new()
-                                        .add_filter("QuantumVault Archive", &["qvault"])
+                                        .add_filter("QuantumVault Envelope", &["qvf"])
                                         .save_file()
                                     {
                                         let mut path_str = path.display().to_string();
-                                        if !path_str.ends_with(".qvault") {
-                                            path_str.push_str(".qvault");
+                                        if !path_str.ends_with(".qvf") {
+                                            path_str.push_str(".qvf");
                                         }
                                         self.enc_output = path_str;
                                     }
@@ -333,20 +428,26 @@ impl eframe::App for QuantumVaultApp {
                                 ui.end_row();
 
                                 // My Identity (Sender)
-                                ui.label("My Identity (Sender):");
+                                ui.label("My Identity (.qvk):");
                                 ui.text_edit_singleline(&mut self.enc_sender);
-                                if ui.button("Select").clicked() {
-                                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                if ui.button("Browse").clicked() {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("QuantumVault Key", &["qvk"])
+                                        .pick_file()
+                                    {
                                         self.enc_sender = path.display().to_string();
                                     }
                                 }
                                 ui.end_row();
 
                                 // Recipient Public Key
-                                ui.label("Recipient Public Keys:");
+                                ui.label("Recipient Public Key / B64:");
                                 ui.text_edit_singleline(&mut self.enc_recipient);
-                                if ui.button("Select").clicked() {
-                                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                                if ui.button("Browse").clicked() {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("QuantumVault Key", &["qvk"])
+                                        .pick_file()
+                                    {
                                         self.enc_recipient = path.display().to_string();
                                     }
                                 }
@@ -376,7 +477,7 @@ impl eframe::App for QuantumVaultApp {
                         }
                     }
                     Tab::Decrypt => {
-                        ui.strong("Open Encrypted Container (v6)");
+                        ui.strong("Open Encrypted Hybrid Envelope (.qvf)");
                         ui.add_space(8.0);
 
                         egui::Grid::new("decrypt_grid")
@@ -384,11 +485,11 @@ impl eframe::App for QuantumVaultApp {
                             .spacing([10.0, 12.0])
                             .show(ui, |ui| {
                                 // Vault File
-                                ui.label("Vault File (.qvault):");
+                                ui.label("Envelope File (.qvf):");
                                 ui.text_edit_singleline(&mut self.dec_vault);
                                 if ui.button("Browse").clicked() {
                                     if let Some(path) = rfd::FileDialog::new()
-                                        .add_filter("QuantumVault Archive", &["qvault"])
+                                        .add_filter("QuantumVault Envelope", &["qvf"])
                                         .pick_file()
                                     {
                                         self.dec_vault = path.display().to_string();
@@ -406,22 +507,28 @@ impl eframe::App for QuantumVaultApp {
                                 }
                                 ui.end_row();
 
-                                // Sender Public Key
-                                ui.label("Sender Public Keys:");
-                                ui.text_edit_singleline(&mut self.dec_sender_pub);
-                                if ui.button("Select").clicked() {
-                                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                        self.dec_sender_pub = path.display().to_string();
+                                // My Identity (Recipient)
+                                ui.label("My Identity (.qvk):");
+                                ui.text_edit_singleline(&mut self.dec_recipient);
+                                if ui.button("Browse").clicked() {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("QuantumVault Key", &["qvk"])
+                                        .pick_file()
+                                    {
+                                        self.dec_recipient = path.display().to_string();
                                     }
                                 }
                                 ui.end_row();
 
-                                // My Identity (Recipient)
-                                ui.label("My Identity (Recipient):");
-                                ui.text_edit_singleline(&mut self.dec_recipient);
-                                if ui.button("Select").clicked() {
-                                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                                        self.dec_recipient = path.display().to_string();
+                                // Sender Public Key (Optional)
+                                ui.label("Sender Public Key / B64 (Opt):");
+                                ui.text_edit_singleline(&mut self.dec_sender_pub);
+                                if ui.button("Browse").clicked() {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .add_filter("QuantumVault Key", &["qvk"])
+                                        .pick_file()
+                                    {
+                                        self.dec_sender_pub = path.display().to_string();
                                     }
                                 }
                                 ui.end_row();
@@ -493,6 +600,7 @@ fn configure_visuals(ctx: &egui::Context) {
 
     ctx.set_style(style);
 }
+
 fn generate_q_icon() -> egui::IconData {
     let width = 64;
     let height = 64;
@@ -536,6 +644,7 @@ fn generate_q_icon() -> egui::IconData {
                 rgba[idx] = 0;
                 rgba[idx + 1] = 0;
                 rgba[idx + 2] = 0;
+                rgba[idx + 3] = 0;
                 rgba[idx + 3] = 0;
             }
         }

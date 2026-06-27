@@ -1,38 +1,38 @@
 [package]
-name = "quantumvault-core"
-version = "2.0.0"
-edition = "2024"
-description = "Core cryptography and vault library for QuantumVault"
-license = "MIT"
+name          = "quantumvault-core"
+version       = "0.1.0"
+edition       = "2021"
+rust-version  = "1.75"
+authors       = ["Dhruvil <dhruvil@quantumvault.dev>"]
+description   = "Post-quantum cryptography SDK core — hybrid PQC primitives"
+license       = "MIT OR Apache-2.0"
+repository    = "https://github.com/Dhruvil-8/quantumvault-sdk"
+keywords      = ["post-quantum", "cryptography", "ml-kem", "ml-dsa", "pqc"]
+categories    = ["cryptography", "no-std"]
 
 [dependencies]
-anyhow = "1.0"
-thiserror = "2.0"
+fips203          = "0.4"
+fips204          = "0.4"
+x25519-dalek     = { workspace = true }
+chacha20poly1305 = { workspace = true }
+hkdf             = { workspace = true }
+sha3             = { workspace = true }
+rand             = { workspace = true }
+rand_core        = { workspace = true }
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+bincode          = { workspace = true }
+base64           = { workspace = true }
+hex              = { workspace = true }
+thiserror        = { workspace = true }
+zeroize          = { workspace = true }
+chrono           = { workspace = true }
+blake3           = "1"
 
-# Classical crypto (X25519 for hybrid security)
-x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
-rand = "0.8"
+[dev-dependencies]
+anyhow         = { workspace = true }
+criterion      = { version = "0.5", features = ["html_reports"] }
 
-# Key Derivation
-hkdf = "0.12"
-sha3 = "0.10"
-
-# Memory safety
-zeroize = { version = "1.8", features = ["derive"] }
-
-# Post-quantum crypto (Pure Rust - NIST FIPS 203/204)
-fips203 = "0.4"
-fips204 = "0.4"
-
-# AEAD encryption
-chacha20poly1305 = { version = "0.10", features = ["alloc"] }
-
-# Constant-time comparison for security-critical operations
-subtle = "2.6"
-
-# Hex encoding for key display
-hex = "0.4"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+[[bench]]
+name    = "crypto"
+harness = false

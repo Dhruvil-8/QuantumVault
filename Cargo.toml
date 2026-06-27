@@ -1,7 +1,43 @@
 [workspace]
-resolver = "2"
 members = [
     "quantumvault-core",
     "quantumvault-cli",
-    "quantumvault-gui"
+    "quantumvault-python",
+    "quantumvault-wasm",
+    "quantumvault-ffi",
+    "quantumvault-gui",
 ]
+resolver = "2"
+
+[workspace.dependencies]
+# Classical crypto
+x25519-dalek      = { version = "2", features = ["static_secrets"] }
+chacha20poly1305  = "0.10"
+hkdf              = "0.12"
+sha3              = "0.10"
+rand              = { version = "0.8", features = ["getrandom"] }
+rand_core         = "0.6"
+getrandom         = { version = "0.2", features = ["js"] }
+
+# Serialisation
+serde             = { version = "1", features = ["derive"] }
+serde_json        = "1"
+bincode           = "1"
+base64            = "0.22"
+hex               = "0.4"
+
+# Error handling
+thiserror         = "1"
+anyhow            = "1"
+
+# Zeroize (secure memory erasure)
+zeroize           = { version = "1", features = ["derive"] }
+
+# Time
+chrono            = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+opt-level         = 3
+lto               = true
+codegen-units     = 1
+strip             = "symbols"

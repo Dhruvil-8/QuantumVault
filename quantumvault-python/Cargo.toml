@@ -1,0 +1,16 @@
+[package]
+name    = "quantumvault-python"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name    = "quantumvault"
+crate-type = ["cdylib"]
+
+[dependencies]
+quantumvault-core = { path = "../quantumvault-core" }
+pyo3 = { version = "0.21", features = ["extension-module"] }
+
+[features]
+default     = ["pyo3/auto-initialize"]
+extension-module = ["pyo3/extension-module"]

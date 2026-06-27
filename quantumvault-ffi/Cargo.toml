@@ -1,0 +1,14 @@
+[package]
+name    = "quantumvault-ffi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name       = "quantumvault_ffi"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+quantumvault-core = { path = "../quantumvault-core" }
+
+[build-dependencies]
+cbindgen = "0.26"

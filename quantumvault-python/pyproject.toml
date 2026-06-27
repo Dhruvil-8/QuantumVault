@@ -1,0 +1,23 @@
+[build-system]
+requires      = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name            = "quantumvault"
+version         = "0.1.0"
+description     = "Post-quantum cryptography SDK — ML-KEM-1024 + ML-DSA-87 + X25519 hybrid"
+requires-python = ">=3.8"
+license         = { text = "MIT OR Apache-2.0" }
+keywords        = ["cryptography", "post-quantum", "ml-kem", "pqc", "security"]
+classifiers     = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Security :: Cryptography",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+]
+
+[tool.maturin]
+features         = ["pyo3/extension-module"]
+python-source    = "quantumvault"
+module-name      = "quantumvault._quantumvault"
