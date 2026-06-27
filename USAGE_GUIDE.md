@@ -87,3 +87,36 @@ cargo run -p quantumvault-gui --release
 2. **Metadata View**: Displays key labels, comments, creation timestamps, and active algorithms directly in the user interface.
 3. **Base64 Key Sharing**: Allows users to quickly copy and share base64 public key strings without creating files.
 4. **Drag-and-Drop / Form Actions**: Prompts for file output paths and appends correct extensions (`.qvk`/`.qvf`) automatically.
+
+---
+
+### Step-by-Step GUI Walkthrough
+
+Here is how Alice and Bob exchange keys and encrypt files using the graphical desktop client:
+
+#### Step 1: Generate a Key
+1. Open the GUI: `cargo run -p quantumvault-gui --release`.
+2. Under **Cryptographic Identity Manager**, type in a **Metadata Label** (e.g., `Alice`) and a **Metadata Comment** (e.g., `Primary Desktop Key`).
+3. Click **Generate New Key**.
+4. In the native file dialog, select where to save your secret identity file (e.g., `alice_secret.qvk`) and click **Save**.
+5. Once saved, the GUI displays your **Shareable Public Key (Base64)** in the text box below. Copy this string.
+
+#### Step 2: Share Your Public Key
+- Alice copies her Base64 public key string from the GUI and sends it to Bob (via chat, email, etc.).
+- Bob generates his keypair using the same steps, copies his Base64 public key, and sends it to Alice.
+
+#### Step 3: Alice Encrypts for Bob
+1. Switch to the **Encrypt File** tab.
+2. Next to **Source File**, click **Browse** and select the file you want to protect (e.g., `confidential.txt`).
+3. Next to **Output Envelope (.qvf)**, click **Save As** and choose where to save the locked container (e.g., `confidential.qvf`).
+4. Next to **My Identity (.qvk)**, click **Browse** and select `alice_secret.qvk`.
+5. Next to **Recipient Public Key / B64**, paste Bob's Base64 public key string directly (or browse to his public `.qvk` file if he sent one).
+6. Click **Encrypt File**.
+
+#### Step 4: Bob Decrypts Alice's File
+1. Switch to the **Decrypt File** tab.
+2. Select the **Envelope File (.qvf)** (e.g., `confidential.qvf`).
+3. Select where to save the decrypted **Output File** (e.g., `decrypted.txt`).
+4. Select Bob's secret key file `bob_secret.qvk` under **My Identity (.qvk)**.
+5. Paste Alice's Base64 public key string under **Sender Public Key / B64** to verify the signature.
+6. Click **Decrypt File**.
