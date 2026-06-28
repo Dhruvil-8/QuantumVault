@@ -113,4 +113,4 @@ struct QVIdentityHandle* alice = qv_identity_generate();
 // Clean up handle
 qv_identity_free(alice);
 ```
-Header location: [quantumvault-ffi/quantumvault.h](file:///c:/Users/admin/Downloads/QuantumVaultRust/quantumvault-ffi/quantumvault.h)
+Header location: [quantumvault-ffi/quantumvault.h](quantumvault-ffi/quantumvault.h)
