@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, anyhow};
-use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta};
+use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta, write_secure_file};
 use std::env;
 use std::path::Path;
 
@@ -64,7 +64,7 @@ fn main() -> Result<()> {
             let meta = KeyMeta { label, comment, expires_at: None };
             let identity = PQIdentity::generate_with_meta(meta).context("Failed to generate identity")?;
             let secret_bytes = identity.export_secret().context("Failed to export secret key")?;
-            std::fs::write(Path::new(out_file), secret_bytes).context("Failed to write secret key file")?;
+            write_secure_file(Path::new(out_file), secret_bytes, true).context("Failed to write secret key file")?;
             
             println!("✓ Identity successfully generated and saved to: {}", out_file);
             if let Ok(pub_b64) = identity.export_public_b64() {
@@ -111,10 +111,10 @@ fn main() -> Result<()> {
 
             if base64_format {
                 let pub_b64 = identity.export_public_b64().context("Failed to export public key to B64")?;
-                std::fs::write(Path::new(pub_path), pub_b64).context("Failed to write public key file")?;
+                write_secure_file(Path::new(pub_path), pub_b64, false).context("Failed to write public key file")?;
             } else {
                 let pub_bytes = identity.export_public().context("Failed to export public key")?;
-                std::fs::write(Path::new(pub_path), pub_bytes).context("Failed to write public key file")?;
+                write_secure_file(Path::new(pub_path), pub_bytes, false).context("Failed to write public key file")?;
             }
 
             println!("✓ Public key successfully exported to: {}", pub_path);
@@ -191,7 +191,7 @@ fn main() -> Result<()> {
             let envelope = PQFile::encrypt_and_sign(&plaintext, &recipient_pub, &sender_identity)
                 .context("Failed to encrypt and sign file")?;
 
-            std::fs::write(Path::new(&output), envelope).context("Failed to write output envelope file")?;
+            write_secure_file(Path::new(&output), envelope, false).context("Failed to write output envelope file")?;
 
             println!("✓ Encryption complete!");
         }
@@ -267,7 +267,7 @@ fn main() -> Result<()> {
             let plaintext = PQFile::decrypt_and_verify(&envelope, &recipient_identity, sender_pub.as_ref())
                 .context("Decryption / signature verification failed")?;
 
-            std::fs::write(Path::new(output), plaintext).context("Failed to write decrypted output file")?;
+            write_secure_file(Path::new(output), plaintext, true).context("Failed to write decrypted output file")?;
 
             if sender_pub.is_some() {
                 println!("✓ Decryption complete and signature verified successfully!");

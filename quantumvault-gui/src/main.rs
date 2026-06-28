@@ -6,7 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use eframe::egui;
-use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta};
+use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta, write_secure_file};
 use std::path::Path;
 
 #[derive(Default, PartialEq)]
@@ -80,7 +80,7 @@ impl QuantumVaultApp {
 
         match PQIdentity::generate_with_meta(meta) {
             Ok(identity) => match identity.export_secret() {
-                Ok(secret_bytes) => match std::fs::write(Path::new(&self.identity_path), &secret_bytes) {
+                Ok(secret_bytes) => match write_secure_file(Path::new(&self.identity_path), &secret_bytes, true) {
                     Ok(_) => {
                         // Automatically export public key file next to it
                         let parent = Path::new(&self.identity_path).parent().unwrap_or_else(|| Path::new(""));
@@ -95,7 +95,7 @@ impl QuantumVaultApp {
                         
                         let mut auto_save_msg = String::new();
                         if let Ok(pub_bytes) = identity.export_public() {
-                            if std::fs::write(&pub_path, &pub_bytes).is_ok() {
+                            if write_secure_file(&pub_path, &pub_bytes, false).is_ok() {
                                 auto_save_msg = format!(" (public key automatically saved next to it as: {})", pub_path.file_name().unwrap_or_default().to_string_lossy());
                             }
                         }
@@ -147,7 +147,7 @@ impl QuantumVaultApp {
                         }
 
                         match identity.export_public() {
-                            Ok(pub_bytes) => match std::fs::write(Path::new(&path_str), &pub_bytes) {
+                            Ok(pub_bytes) => match write_secure_file(Path::new(&path_str), &pub_bytes, false) {
                                 Ok(_) => {
                                     self.identity_status = Some(Ok(format!("Public key successfully saved to: {}", path_str)));
                                 }
@@ -256,7 +256,7 @@ impl QuantumVaultApp {
 
         match PQFile::encrypt_and_sign(&plaintext, &recipient_pub, &sender_identity) {
             Ok(envelope) => {
-                match std::fs::write(Path::new(&self.enc_output), &envelope) {
+                match write_secure_file(Path::new(&self.enc_output), &envelope, false) {
                     Ok(_) => {
                         self.enc_status = Some(Ok("✓ Encryption completed successfully!".to_string()));
                     }
@@ -325,7 +325,7 @@ impl QuantumVaultApp {
 
         match PQFile::decrypt_and_verify(&envelope, &recipient_identity, sender_pub.as_ref()) {
             Ok(plaintext) => {
-                match std::fs::write(Path::new(&self.dec_output), &plaintext) {
+                match write_secure_file(Path::new(&self.dec_output), &plaintext, true) {
                     Ok(_) => {
                         let success_msg = if sender_pub.is_some() {
                             "✓ Decryption completed & signature verified successfully!"

@@ -29,6 +29,7 @@ pub mod sym;
 pub mod kdf;
 pub mod file;
 pub mod session;
+pub mod util;
 
 // Flat re-exports for ergonomic API
 pub use error::{QVError, QVResult};
@@ -37,3 +38,4 @@ pub use keys::format::{KeyMeta, KeyType};
 pub use file::envelope::PQFile;
 pub use session::ratchet::PQSession;
 pub use sign::hybrid::{sign, verify};
+pub use util::write_secure_file;
