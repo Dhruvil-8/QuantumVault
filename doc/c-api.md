@@ -4,7 +4,7 @@
 This codebase is AI-generated and has not undergone security audits.
 :::
 
-The FFI interface is defined in [quantumvault.h](file:///c:/Users/admin/Downloads/QuantumVaultRust/quantumvault-ffi/quantumvault.h).
+The FFI interface is defined in [quantumvault.h](../quantumvault-ffi/quantumvault.h).
 
 ## Handle Allocation
 
