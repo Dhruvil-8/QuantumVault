@@ -100,12 +100,10 @@ impl QuantumVaultApp {
                             }
                         }
 
-                        let pub_b64 = identity.export_public_b64().unwrap_or_default();
                         self.identity_info = Some(format!(
-                            "Label: {}\nComment: {}\n\nShareable Public Key (Base64):\n{}",
+                            "Label: {}\nComment: {}",
                             identity.meta.label.as_deref().unwrap_or("None"),
                             identity.meta.comment.as_deref().unwrap_or("None"),
-                            pub_b64
                         ));
                         self.identity_status =
                             Some(Ok(format!("Identity successfully generated and saved!{}", auto_save_msg)));
@@ -184,12 +182,10 @@ impl QuantumVaultApp {
         match std::fs::read(Path::new(&self.identity_path)) {
             Ok(bytes) => match PQIdentity::from_secret_bytes(&bytes) {
                 Ok(identity) => {
-                    let pub_b64 = identity.export_public_b64().unwrap_or_default();
                     self.identity_info = Some(format!(
-                        "Label: {}\nComment: {}\n\nShareable Public Key (Base64):\n{}",
+                        "Label: {}\nComment: {}",
                         identity.meta.label.as_deref().unwrap_or("None"),
                         identity.meta.comment.as_deref().unwrap_or("None"),
-                        pub_b64
                     ));
                     self.identity_status = Some(Ok("Identity successfully loaded!".to_string()));
                 }
