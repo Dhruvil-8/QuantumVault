@@ -4,6 +4,7 @@ use crate::constants::*;
 use crate::error::{QVError, QVResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +37,17 @@ pub struct KeyMeta {
     pub comment: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,  // Unix timestamp
+}
+
+impl KeyMeta {
+    /// Returns `true` if this key has an expiry timestamp that is in the past.
+    pub fn is_expired(&self) -> bool {
+        if let Some(expires_at) = self.expires_at {
+            Utc::now().timestamp() > expires_at
+        } else {
+            false
+        }
+    }
 }
 
 /// Serialise key material into QVKey v1 binary format.
@@ -112,7 +124,18 @@ pub fn decode_qvkey(data: &[u8]) -> QVResult<DecodedQVKey> {
     let meta: KeyMeta = serde_json::from_slice(&data[meta_start..meta_end])
         .map_err(|e: serde_json::Error| QVError::Deserialisation(e.to_string()))?;
 
+    // S3: Enforce key expiry — reject expired keys at decode time
+    if meta.is_expired() {
+        return Err(QVError::InvalidKeyFormat(
+            "key has expired — generate a new keypair".into()
+        ));
+    }
+
     let payload_len = u32::from_le_bytes(data[meta_end..meta_end+4].try_into().unwrap()) as usize;
+    const MAX_PAYLOAD_LEN: usize = 16 * 1024 * 1024; // 16MB max key payload
+    if payload_len > MAX_PAYLOAD_LEN {
+        return Err(QVError::InvalidKeyFormat("payload length exceeds maximum allowed".into()));
+    }
     let payload_start: usize = meta_end + 4;
     let payload_end = match payload_start.checked_add(payload_len) {
         Some(end) => end,
@@ -127,10 +150,10 @@ pub fn decode_qvkey(data: &[u8]) -> QVResult<DecodedQVKey> {
         return Err(QVError::InvalidKeyFormat("truncated at payload".into()));
     }
 
-    // Verify checksum
+    // S4: Verify checksum using constant-time comparison to prevent timing side-channels
     let expected_hash = blake3::hash(&data[..payload_end]);
     let stored_hash = &data[payload_end..payload_end + 32];
-    if expected_hash.as_bytes() != stored_hash {
+    if expected_hash.as_bytes().ct_eq(stored_hash).unwrap_u8() != 1 {
         return Err(QVError::InvalidKeyFormat("checksum mismatch — key is corrupt".into()));
     }
 

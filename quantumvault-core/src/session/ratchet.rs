@@ -1,9 +1,9 @@
 // src/session/ratchet.rs
 
+use crate::constants::{SESSION_REKEY_THRESHOLD, HKDF_INFO_SESSION};
 use crate::error::{QVError, QVResult};
 use crate::sym::aead::{encrypt, decrypt};
 use crate::kdf::hkdf::hkdf_sha3_512;
-use crate::constants::SESSION_REKEY_THRESHOLD;
 use zeroize::Zeroize;
 
 pub struct PQSession {
@@ -17,6 +17,16 @@ impl PQSession {
             key: shared_key,
             nonce_counter: 0,
         }
+    }
+
+    /// Returns the number of encrypt/decrypt operations remaining before rekeying is mandatory.
+    pub fn messages_remaining(&self) -> u64 {
+        SESSION_REKEY_THRESHOLD.saturating_sub(self.nonce_counter)
+    }
+
+    /// Returns the current nonce counter value.
+    pub fn nonce_counter(&self) -> u64 {
+        self.nonce_counter
     }
 
     /// Encrypt a message using the session key, then ratchet the key.
@@ -44,8 +54,8 @@ impl PQSession {
     }
 
     fn ratchet(&mut self) -> QVResult<()> {
-        // Derive next session key
-        let derived = hkdf_sha3_512(&self.key, None, b"ratchet", 32)?;
+        // Derive next session key using proper domain-separated HKDF info
+        let derived = hkdf_sha3_512(&self.key, None, HKDF_INFO_SESSION, 32)?;
         self.key.copy_from_slice(&derived);
         Ok(())
     }

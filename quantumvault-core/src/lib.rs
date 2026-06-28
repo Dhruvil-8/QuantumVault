@@ -1,3 +1,4 @@
+#![deny(unsafe_code)]
 //! QuantumVault Core — Post-Quantum Cryptography SDK
 //!
 //! # Quick Start

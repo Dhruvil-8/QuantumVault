@@ -32,6 +32,9 @@ impl Identity {
         self.inner.export_public_b64().map_err(to_js_err)
     }
 
+    /// Export secret key as bytes.
+    /// WARNING: These are raw secret key bytes. Encrypt before storing or transmitting.
+    /// In a browser context, consider using the Web Crypto API for secure storage.
     pub fn export_secret(&self) -> Result<Vec<u8>, JsValue> {
         self.inner.export_secret().map_err(to_js_err)
     }
@@ -61,6 +64,12 @@ impl PublicKey {
         PQPublicKey::from_b64(s)
             .map(|inner| PublicKey { inner })
             .map_err(to_js_err)
+    }
+
+    /// Returns a BLAKE3 fingerprint string for out-of-band key verification.
+    /// Format: "QV:xxxx:xxxx:xxxx:xxxx"
+    pub fn fingerprint(&self) -> Result<String, JsValue> {
+        self.inner.fingerprint().map_err(to_js_err)
     }
 }
 

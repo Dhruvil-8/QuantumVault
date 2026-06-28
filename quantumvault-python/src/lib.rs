@@ -73,6 +73,11 @@ impl PyPublicKey {
         let inner = PQPublicKey::from_b64(s).map_err(qverr)?;
         Ok(Self { inner })
     }
+
+    /// Get a BLAKE3 fingerprint for out-of-band key verification.
+    fn fingerprint(&self) -> PyResult<String> {
+        self.inner.fingerprint().map_err(qverr)
+    }
 }
 
 /// Encrypt bytes for a recipient, optionally signing with sender's identity.
@@ -124,6 +129,6 @@ fn _quantumvault(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decrypt, m)?)?;
     m.add_function(wrap_pyfunction!(sign, m)?)?;
     m.add_function(wrap_pyfunction!(verify, m)?)?;
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", "0.2.0")?;
     Ok(())
 }

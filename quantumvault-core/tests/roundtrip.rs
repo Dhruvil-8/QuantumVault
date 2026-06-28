@@ -1,13 +1,12 @@
-use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta, KeyType};
+use quantumvault_core::{PQIdentity, PQPublicKey, KeyMeta};
 use quantumvault_core::error::QVError;
-use fips203::traits::{SerDes, KeyGen};
 
 #[test]
 fn test_identity_generation_and_export_import() {
     let meta = KeyMeta {
         label: Some("Alice".to_string()),
         comment: Some("Test comment".to_string()),
-        expires_at: Some(1735689600),
+        expires_at: Some(2051222400), // Year 2035 (future)
     };
     let identity = PQIdentity::generate_with_meta(meta).unwrap();
     
@@ -17,7 +16,7 @@ fn test_identity_generation_and_export_import() {
     
     assert_eq!(pub_key.meta.label, Some("Alice".to_string()));
     assert_eq!(pub_key.meta.comment, Some("Test comment".to_string()));
-    assert_eq!(pub_key.meta.expires_at, Some(1735689600));
+    assert_eq!(pub_key.meta.expires_at, Some(2051222400));
 
     // Export and import secret key
     let sec_bytes = identity.export_secret().unwrap();
@@ -26,6 +25,28 @@ fn test_identity_generation_and_export_import() {
 
     assert_eq!(identity2.meta.label, Some("Alice".to_string()));
     assert_eq!(identity.export_public().unwrap(), identity2.export_public().unwrap());
+}
+
+#[test]
+fn test_expired_key_rejection() {
+    // Generate key with an expiry in the past (2020)
+    let meta = KeyMeta {
+        label: Some("Expired Identity".to_string()),
+        comment: None,
+        expires_at: Some(1577836800), // Year 2020 (past)
+    };
+    
+    let identity = PQIdentity::generate_with_meta(meta).unwrap();
+    let pub_bytes = identity.export_public().unwrap();
+    
+    // Decoding must fail with InvalidKeyFormat detailing key expiry
+    let res = PQPublicKey::from_bytes(&pub_bytes);
+    assert!(res.is_err());
+    if let Err(QVError::InvalidKeyFormat(msg)) = res {
+        assert!(msg.contains("expired"));
+    } else {
+        panic!("expected InvalidKeyFormat due to key expiry, got {:?}", res);
+    }
 }
 
 #[test]

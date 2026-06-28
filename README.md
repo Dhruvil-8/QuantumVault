@@ -27,7 +27,7 @@ The project is configured as a single Cargo workspace containing:
 - **Key Derivation (KDF)**: HKDF-SHA3-512 combining classical and PQ secrets.
 - **Symmetric Encryption**: ChaCha20-Poly1305 authenticated encryption.
 - **Key Storage (`.qvk`)**: Binary serialized files containing key type tags, JSON-based user metadata, payload data, and BLAKE3 checksums.
-- **Envelope Container (`.qvf`)**: Packed payload wrapping KEM ciphertext, detached signature, and AEAD encrypted data.
+- **Envelope Container (`.qvf`)**: Packed payload wrapping KEM ciphertext, optional signature (supported via header flags byte), and AEAD encrypted data. Allows both signed and anonymous encryption modes.
 
 ---
 

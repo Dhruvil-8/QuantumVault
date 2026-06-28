@@ -29,7 +29,9 @@ pub fn encapsulate(recipient: &PQPublicKey) -> QVResult<KemResult> {
     // === X25519 ===
     let ephemeral_secret = StaticSecret::random_from_rng(OsRng);
     let ephemeral_public = x25519_dalek::PublicKey::from(&ephemeral_secret);
-    let x25519_ss: [u8; 32] = ephemeral_secret.diffie_hellman(&recipient.x25519_public).to_bytes();
+    let mut x25519_ss = Zeroizing::new(
+        ephemeral_secret.diffie_hellman(&recipient.x25519_public).to_bytes()
+    );
 
     // === ML-KEM-1024 ===
     let (mlkem_ss, mlkem_ct): (fips203::SharedSecretKey, fips203::ml_kem_1024::CipherText) = 
@@ -39,8 +41,11 @@ pub fn encapsulate(recipient: &PQPublicKey) -> QVResult<KemResult> {
     // === Combine via HKDF-SHA3-512 ===
     // IKM = x25519_ss || mlkem_ss (64 bytes total)
     let mut ikm = Zeroizing::new([0u8; 64]);
-    ikm[..32].copy_from_slice(&x25519_ss);
+    ikm[..32].copy_from_slice(&*x25519_ss);
     ikm[32..].copy_from_slice(&mlkem_ss.clone().into_bytes());
+
+    // Explicitly zeroize x25519_ss now that it's been copied into ikm
+    x25519_ss.iter_mut().for_each(|b| *b = 0);
 
     // Salt = x25519_ephemeral_pub || mlkem_ciphertext (prevents KEM mixing attacks)
     let mut salt = Vec::with_capacity(32 + MLKEM1024_CIPHERTEXT_SIZE);
@@ -72,7 +77,9 @@ pub fn decapsulate(identity: &PQIdentity, ciphertext: &[u8]) -> QVResult<Zeroizi
     // === X25519 ===
     let ephemeral_pub_bytes: [u8; 32] = ciphertext[..32].try_into().unwrap();
     let ephemeral_pub = x25519_dalek::PublicKey::from(ephemeral_pub_bytes);
-    let x25519_ss: [u8; 32] = identity.x25519_secret.diffie_hellman(&ephemeral_pub).to_bytes();
+    let mut x25519_ss = Zeroizing::new(
+        identity.x25519_secret.diffie_hellman(&ephemeral_pub).to_bytes()
+    );
 
     // === ML-KEM-1024 ===
     let mut ct_bytes = [0u8; MLKEM1024_CIPHERTEXT_SIZE];
@@ -85,8 +92,11 @@ pub fn decapsulate(identity: &PQIdentity, ciphertext: &[u8]) -> QVResult<Zeroizi
 
     // === Combine via HKDF-SHA3-512 ===
     let mut ikm = Zeroizing::new([0u8; 64]);
-    ikm[..32].copy_from_slice(&x25519_ss);
+    ikm[..32].copy_from_slice(&*x25519_ss);
     ikm[32..].copy_from_slice(&mlkem_ss.into_bytes());
+
+    // Explicitly zeroize x25519_ss now that it's been copied into ikm
+    x25519_ss.iter_mut().for_each(|b| *b = 0);
 
     let derived = hkdf_sha3_512(ikm.as_ref(), Some(ciphertext), HKDF_INFO_KEM, 32)?;
     let mut shared_key = Zeroizing::new([0u8; 32]);

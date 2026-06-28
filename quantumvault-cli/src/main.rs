@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta, write_secure_file};
 use std::env;
 use std::path::Path;
+use zeroize::Zeroize;
 
 fn print_usage() {
     println!("╔══════════════════════════════════════════════════════════════╗");
@@ -14,6 +15,7 @@ fn print_usage() {
     println!("    quantumvault-cli export-public -s <secret-key.qvk> -o <out-pub-file.qvk> [--base64]");
     println!("    quantumvault-cli encrypt -i <input> -o <output.qvf> -s <sender-secret.qvk> -r <recipient-public>");
     println!("    quantumvault-cli decrypt -i <input.qvf> -o <output> -r <recipient-secret.qvk> [-s <sender-public>]");
+    println!("    quantumvault-cli version");
     println!();
     println!("Note: -r / -s for public keys can be either a path to a public key file or a Base64 key string.");
 }
@@ -27,6 +29,9 @@ fn main() -> Result<()> {
 
     let command = &args[1];
     match command.as_str() {
+        "version" | "--version" | "-V" => {
+            println!("quantumvault-cli {}", env!("CARGO_PKG_VERSION"));
+        }
         "keygen" => {
             if args.len() < 3 {
                 return Err(anyhow!(
@@ -106,8 +111,10 @@ fn main() -> Result<()> {
             let secret_path = secret_path.ok_or_else(|| anyhow!("Secret key file is required (-s/--secret)"))?;
             let pub_path = pub_path.ok_or_else(|| anyhow!("Output file is required (-o/--output)"))?;
 
-            let secret_bytes = std::fs::read(Path::new(secret_path)).context("Failed to read secret key file")?;
+            // Read and zeroize secret key bytes after loading
+            let mut secret_bytes = std::fs::read(Path::new(secret_path)).context("Failed to read secret key file")?;
             let identity = PQIdentity::from_secret_bytes(&secret_bytes).context("Failed to load secret key")?;
+            secret_bytes.zeroize();
 
             if base64_format {
                 let pub_b64 = identity.export_public_b64().context("Failed to export public key to B64")?;
@@ -178,8 +185,11 @@ fn main() -> Result<()> {
             println!("Encrypting file {} -> {} ...", input, output);
             
             let plaintext = std::fs::read(Path::new(input)).context("Failed to read source file")?;
-            let sender_bytes = std::fs::read(Path::new(sender_path)).context("Failed to read sender identity file")?;
+            
+            // Read and zeroize secret key bytes after loading
+            let mut sender_bytes = std::fs::read(Path::new(sender_path)).context("Failed to read sender identity file")?;
             let sender_identity = PQIdentity::from_secret_bytes(&sender_bytes).context("Failed to load sender identity")?;
+            sender_bytes.zeroize();
 
             // Load recipient public key
             let recipient_pub = if let Ok(pub_bytes) = std::fs::read(Path::new(recipient_input)) {
@@ -249,8 +259,11 @@ fn main() -> Result<()> {
 
             println!("Decrypting file {} -> {} ...", input, output);
             let envelope = std::fs::read(Path::new(input)).context("Failed to read envelope file")?;
-            let recipient_bytes = std::fs::read(Path::new(recipient_path)).context("Failed to read recipient secret key file")?;
+            
+            // Read and zeroize secret key bytes after loading
+            let mut recipient_bytes = std::fs::read(Path::new(recipient_path)).context("Failed to read recipient secret key file")?;
             let recipient_identity = PQIdentity::from_secret_bytes(&recipient_bytes).context("Failed to load recipient identity")?;
+            recipient_bytes.zeroize();
 
             // Load optional sender public key
             let sender_pub = if let Some(sender_val) = sender_input {
@@ -264,10 +277,11 @@ fn main() -> Result<()> {
                 None
             };
 
-            let plaintext = PQFile::decrypt_and_verify(&envelope, &recipient_identity, sender_pub.as_ref())
+            let mut plaintext = PQFile::decrypt_and_verify(&envelope, &recipient_identity, sender_pub.as_ref())
                 .context("Decryption / signature verification failed")?;
 
-            write_secure_file(Path::new(output), plaintext, true).context("Failed to write decrypted output file")?;
+            write_secure_file(Path::new(output), &plaintext, true).context("Failed to write decrypted output file")?;
+            plaintext.zeroize();
 
             if sender_pub.is_some() {
                 println!("✓ Decryption complete and signature verified successfully!");

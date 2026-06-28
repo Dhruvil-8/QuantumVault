@@ -4,6 +4,7 @@
 //! Replaces the old Tauri frontend with a 100% Rust implementation.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+#![allow(clippy::collapsible_if)] // egui button-click + dialog pattern is clearer with separate ifs
 
 use eframe::egui;
 use quantumvault_core::{PQIdentity, PQPublicKey, PQFile, KeyMeta, write_secure_file};
@@ -73,8 +74,8 @@ impl QuantumVaultApp {
         }
 
         let meta = KeyMeta {
-            label: Some(self.identity_label.trim().to_string()),
-            comment: Some(self.identity_comment.trim().to_string()),
+            label: if self.identity_label.trim().is_empty() { None } else { Some(self.identity_label.trim().to_string()) },
+            comment: if self.identity_comment.trim().is_empty() { None } else { Some(self.identity_comment.trim().to_string()) },
             expires_at: None,
         };
 
@@ -710,7 +711,6 @@ fn generate_q_icon() -> egui::IconData {
                 rgba[idx] = 0;
                 rgba[idx + 1] = 0;
                 rgba[idx + 2] = 0;
-                rgba[idx + 3] = 0;
                 rgba[idx + 3] = 0;
             }
         }

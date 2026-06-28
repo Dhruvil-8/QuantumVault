@@ -3104,6 +3104,7 @@ version = "2.0.0"
 dependencies = [
  "anyhow",
  "quantumvault-core",
+ "zeroize",
 ]
 
 [[package]]
@@ -3126,6 +3127,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha3",
+ "subtle",
  "thiserror 1.0.69",
  "x25519-dalek",
  "zeroize",
